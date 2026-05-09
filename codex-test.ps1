@@ -19,8 +19,8 @@ if ($env:CODEX_TEST_BIN_DIR) {
 $ShellMarkerStart = "# >>> codex-test shell integration >>>"
 $ShellMarkerEnd = "# <<< codex-test shell integration <<<"
 
-$DefaultPrompt = 'Use $codex-test. Before running commands or editing files, offer the user three testing workflow options: Recommended Test Scan, Increase Test Coverage, and Specialized Test Development. If the user already provided a goal or mode, infer the mode and proceed. Then analyze the repository, propose a prioritized production-ready plan, generate approved tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps.'
-$ExecPrompt = 'Use $codex-test in non-interactive mode. Select the workflow from the explicit mode or goal; otherwise use Recommended Test Scan. For Increase Test Coverage, target 80% unless another threshold is provided and cover lower-complexity meaningful gaps before more complex gaps. Generate focused production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps. Do not install dependencies or edit product source unless they are already part of the repository setup.'
+$DefaultPrompt = 'Use $codex-test. Before running commands, inspecting the repository, proposing a plan, or editing files, show the user exactly three numbered testing workflow options: 1. Recommended Test Scan, 2. Increase Test Coverage, 3. Specialized Test Development. Wait for the user to reply with 1, 2, or 3. Do not infer the workflow from the user goal, prior context, or any other text. After the user selects a number, run that workflow, generate approved production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps.'
+$ExecPrompt = 'Use $codex-test in non-interactive mode with the explicitly requested workflow mode. Do not infer a workflow from the user goal. For Increase Test Coverage, target 80% unless another threshold is provided and cover lower-complexity meaningful gaps before more complex gaps. Generate focused production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps. Do not install dependencies or edit product source unless they are already part of the repository setup.'
 
 function Show-Usage {
   @"
@@ -28,11 +28,12 @@ codex-test v$Version
 
 Usage:
   codex-test.ps1                    Open Codex with the codex-test workflow
-  codex-test.ps1 --exec             Run non-interactively with a bounded plan
-  codex-test.ps1 --exec --go-ham    Run with approval policy "never"
+  codex-test.ps1 --exec --mode MODE Run non-interactively with an explicit mode
+  codex-test.ps1 --exec --mode MODE --go-ham
+                                    Run with approval policy "never"
   codex-test.ps1 --plan-only        Inspect the repo and stop after the plan
   codex-test.ps1 --goal "..."       Add a testing goal or area to focus on
-  codex-test.ps1 --mode "..."       Preselect recommended, coverage, or specialized
+  codex-test.ps1 --mode "..."       Set exec mode: recommended, coverage, or specialized
   codex-test.ps1 --coverage-target N
                                     Set a coverage target for coverage mode
   codex-test.ps1 --test-kind "..."  Focus specialized tests, e.g. e2e or regression
@@ -46,6 +47,8 @@ Report:
   $ReportFile
 
 Notes:
+  Interactive runs always ask for 1, 2, or 3 before doing testing work.
+  --exec requires --mode recommended, --mode coverage, or --mode specialized.
   --exec uses workspace-write sandboxing so tests and the report can be written.
 "@
 }
@@ -407,6 +410,16 @@ for ($i = 0; $i -lt $RemainingArgs.Count; $i++) {
     { $_ -in @("--version", "-v") } { Write-Host "codex-test v$Version"; exit 0 }
     default { $ExtraArgs += $arg }
   }
+}
+
+if ($Mode -eq "exec" -and -not $TestMode) {
+  Write-Error "--exec requires --mode recommended, --mode coverage, or --mode specialized"
+  exit 2
+}
+
+if ($Mode -ne "exec" -and $TestMode) {
+  Write-Error "--mode is only supported with --exec. Interactive codex-test always asks the user to choose 1, 2, or 3."
+  exit 2
 }
 
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {

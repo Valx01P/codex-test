@@ -1,16 +1,18 @@
 <!-- generated-by: codex-test -->
-<!-- timestamp: 2026-05-09T23:03:15Z -->
+<!-- timestamp: 2026-05-09T23:15:46Z -->
 
 # Summary
 
-Timestamp: 2026-05-09T23:03:15Z
+Timestamp: 2026-05-09T23:15:46Z
 
 Repository: `/Users/pvaldes/Projects/codex-test`
 
 Selected workflow mode: Specialized Test Development for the codex-test skill
 itself. This pass reviewed the earlier changes from the perspective of a
 developer using codex-test on a production app, then tightened the workflow,
-prompts, analyzer output, CLI options, report standard, docs, and tests.
+prompts, analyzer output, CLI options, report standard, docs, and tests. A
+follow-up pass aligned the interactive flow with the required behavior: plain
+`codex test` always asks for `1`, `2`, or `3` and never infers the workflow.
 
 Detected stack: Bash and PowerShell wrappers/installers plus Markdown skill
 instructions. The bundled analyzer still reports this repository as `unknown`
@@ -23,7 +25,7 @@ Coverage target behavior: future target repos default to 80% only when users
 select coverage mode without providing a threshold. The wrapper now accepts
 targets like `85` and `85%`, normalizes them, and rejects invalid values.
 
-Validation result: `bash tests/run.sh` passes with 16 passing tests and 0
+Validation result: `bash tests/run.sh` passes with 18 passing tests and 0
 failing tests.
 
 # Overview
@@ -36,9 +38,9 @@ failing tests.
 | `codex-test.ps1` | Updated | PowerShell CLI wrapper | Mirrors Bash workflow flags and validation logic for Windows users. | Not executed because `pwsh` is unavailable. |
 | `scripts/analyze.sh` | Updated | Analyzer | Emits coverage, lint, typecheck, build, monorepo, and workspace signals for production planning. | Harness and syntax checks passed. |
 | `scripts/report.sh` | Updated | Report finalizer | Warns when reports miss `Production Context` or `Human Review Packet`. | Harness and syntax checks passed. |
-| `tests/run.sh` | Updated | Test harness | Covers mode validation, conflicting options, coverage target normalization, CI command discovery, monorepo signals, and report headings. | `16 passing, 0 failing`. |
+| `tests/run.sh` | Updated | Test harness | Covers strict interactive menu prompting, exec mode requirements, mode validation, conflicting options, coverage target normalization, CI command discovery, monorepo signals, and report headings. | `18 passing, 0 failing`. |
 | `README.md` | Updated | User docs | Documents the three modes, coverage target syntax, and production app behavior. | Reviewed in diff. |
-| `agents/openai.yaml` | Updated | Skill UI metadata | Default prompt now frames the workflow as production-ready testing. | Skill validator passed. |
+| `agents/openai.yaml` | Updated | Skill UI metadata | Default prompt now says to show the numbered menu and wait for the user's choice. | Skill validator passed. |
 | `install.sh` | Updated | Bash installer | Includes the new report reference and avoids the prior shell-profile `pipefail` issue. | Harness and syntax checks passed. |
 | `install.ps1` | Updated | PowerShell installer | Includes the new report reference in the web-download path. | Not executed because `pwsh` is unavailable. |
 | `CODEX-TEST-REPORT.md` | Updated | Review artifact | Documents the current production-readiness pass. | Finalizer passed. |
@@ -50,7 +52,7 @@ failing tests.
 | Target user | Developers applying codex-test to large production apps, especially Next.js/frontends, backends, and monorepos. |
 | Core production need | The tool should avoid vague "add tests" behavior and instead produce reviewable, deterministic, CI-aware test work. |
 | Existing conventions | The skill now tells Codex to reuse repo-local fixtures, factories, mocks, auth helpers, page objects, route helpers, and CI scripts. |
-| Human interaction | Interactive runs now start with mode choices; explicit CLI flags skip the menu safely. Approval gates are called out for dependencies, CI, coverage thresholds, product source edits, and long e2e suites. |
+| Human interaction | Interactive runs always start with numbered choices and wait for `1`, `2`, or `3`. Explicit mode flags are only allowed for non-interactive `--exec` runs. Approval gates are called out for dependencies, CI, coverage thresholds, product source edits, and long e2e suites. |
 | CI impact | Analyzer now surfaces lint, typecheck, build, coverage, and workspace signals so the plan can include realistic review-ready commands. |
 | Runtime/flake risk | Skill/report guidance now requires documenting e2e/integration runtime cost, flake risks, selectors, seeded data, time/network handling, and cleanup. |
 | Data/secrets | Skill hard rules now forbid real production services, secrets, live user data, payment credentials, or live third-party APIs in generated tests. |
@@ -68,6 +70,7 @@ developers would likely want four extra things before trusting it on a large app
 | P1 | Surface CI and monorepo signals. | Production review usually depends on package-level test, typecheck, lint, build, and workspace scope. |
 | P1 | Strengthen production prompt/report guidance. | Reports should explain CI/runtime impact, flake risk, secrets/data assumptions, and what is ready for human review. |
 | P1 | Keep docs aligned. | Users should understand the behavior before running the tool on a real app. |
+| P1 | Enforce the interactive menu contract. | `codex test` should always ask for `1`, `2`, or `3`; non-interactive runs must provide `--mode`. |
 
 Skipped or deferred:
 
@@ -89,7 +92,7 @@ work in reviewable batches, preserve approval gates, and document readiness.
 
 | Part | What it does | Why it matters | Review notes |
 | --- | --- | --- | --- |
-| Mode menu | Offers Recommended Test Scan, Increase Test Coverage, and Specialized Test Development before analysis when mode is not already clear. | Gives users control before commands or edits. | Explicit goals still let Codex infer and proceed. |
+| Mode menu | Always offers Recommended Test Scan, Increase Test Coverage, and Specialized Test Development before analysis in interactive runs. | Gives users control before commands or edits. | Goals are scope context only; they never select the workflow. |
 | Coverage workflow | Defaults to 80%, measures baseline when possible, then covers lower-complexity meaningful gaps before harder suites. | Avoids shallow coverage inflation and gives a practical route to higher thresholds. | Coverage gates are not changed without approval. |
 | Specialized workflow | Handles e2e, regression, feature, API/contract, accessibility, backend, UI/component, and upcoming-feature tests. | Production teams often need focused suites, not just unit coverage. | Requires runtime, flake, data setup, and CI implications in the report. |
 | Production Repo Defaults | Adds monorepo/package awareness, approval gates, batching, local helper reuse, secret/data rules, scoped commands, and flake-risk blockers. | These are the safeguards production developers expect. | This is the biggest production-usefulness improvement in this pass. |
@@ -136,7 +139,9 @@ coverage targets, and adds production-readiness language to the generated prompt
 | `normalize_coverage_target` | Strips whitespace/percent signs and accepts numeric targets from 1 to 100. | Makes `85` and `85%` behave the same. | Covered by exec prompt test. |
 | `--coverage-target` conflict check | Rejects coverage target when mode is not coverage. | Prevents contradictory prompts. | Covered by conflict test. |
 | `--test-kind` conflict check | Requires specialized mode when a test kind is provided. | Keeps specialized suite requests clear. | Implemented in Bash and PowerShell. |
-| Prompt wording | Adds production-ready plan language plus CI/runtime and flake-risk notes. | Future Codex runs know what to document for reviewers. | Covered by default-prompt assertion. |
+| Prompt wording | Requires showing exactly three numbered options, waiting for `1`, `2`, or `3`, and never inferring from goal text. It also adds production-ready plan language plus CI/runtime and flake-risk notes. | Future Codex runs follow the required menu flow and know what to document for reviewers. | Covered by default-prompt assertion. |
+| Exec mode requirement | `--exec` exits unless `--mode recommended`, `--mode coverage`, or `--mode specialized` is provided. | Non-interactive runs cannot silently default to the wrong workflow. | Covered by exec-requires-mode test. |
+| Interactive mode rejection | `--mode` is rejected unless `--exec` is present. | Plain `codex test` always asks the user to choose a number. | Covered by interactive-rejects-mode test. |
 | `first_shell_profile` | Reads the first shell profile without `head` under `pipefail`. | Keeps installer flows from failing on macOS Bash profile detection. | Existing install-repo regression remains green. |
 
 Tests and validation:
@@ -158,7 +163,8 @@ conflict checks, and production-ready prompt wording.
 | `Normalize-TestMode` | Maps mode aliases to `recommended`, `coverage`, or `specialized`; rejects unknown values. | Keeps Windows behavior aligned with Bash. | Not executed locally. |
 | `Normalize-CoverageTarget` | Accepts values like `80` and `85%`, rejects non-numeric or out-of-range targets. | Prevents malformed prompts. | Not executed locally. |
 | Parser conflict checks | Rejects coverage target outside coverage mode and test kind outside specialized mode. | Prevents contradictory user intent. | Mirrors Bash behavior. |
-| Prompt wording | Adds production-ready plan, CI/runtime, and flake-risk notes. | Keeps Windows launcher output aligned. | Requires future `pwsh` validation. |
+| Prompt wording | Requires numbered workflow selection in interactive runs and adds production-ready plan, CI/runtime, and flake-risk notes. | Keeps Windows launcher output aligned. | Requires future `pwsh` validation. |
+| Exec/interactive checks | Requires `--mode` for `--exec` and rejects `--mode` in interactive mode. | Mirrors the strict Bash flow. | Requires future `pwsh` validation. |
 
 Validation:
 
@@ -219,6 +225,8 @@ changes.
 | --- | --- | --- |
 | Next.js/Vitest fixture | Coverage, lint, typecheck, build, and `turbo.json` monorepo output. | Production planning needs CI and workspace signals. |
 | Exec prompt fixture | `--mode cover --coverage-target 85%` normalizes to coverage mode and `85%`. | Users commonly include percent signs. |
+| Exec requires mode test | `--exec` without `--mode` exits 2. | Non-interactive runs cannot assume a workflow. |
+| Interactive rejects mode test | `--mode coverage` without `--exec` exits 2. | Plain `codex test` always asks for `1`, `2`, or `3`. |
 | Invalid mode test | `--mode covrage` exits 2 with a helpful error. | Prevents ambiguous typo-driven prompts. |
 | Conflicting options test | `--mode recommended --coverage-target 80` exits 2. | Prevents contradictory instructions. |
 | Report fixtures | Include `Production Context` and `Human Review Packet`. | Keeps finalizer expectations aligned. |
@@ -228,7 +236,7 @@ Validation:
 
 | Command | Result | Notes |
 | --- | --- | --- |
-| `bash tests/run.sh` | Passed | 16 passing, 0 failing. |
+| `bash tests/run.sh` | Passed | 18 passing, 0 failing. |
 | `bash -n tests/run.sh` | Passed | Syntax check. |
 | `/bin/bash -n tests/run.sh` | Passed | macOS Bash syntax check. |
 
@@ -240,8 +248,8 @@ expect the tool to behave.
 | Part | What it does | Why it matters |
 | --- | --- | --- |
 | Mode section | Documents Recommended Test Scan, Increase Test Coverage, and Specialized Test Development. | Users know what choice they will see before analysis. |
-| Coverage examples | Shows `--mode coverage --coverage-target 85` and notes `85%` is accepted. | Makes coverage workflow scriptable. |
-| Specialized example | Shows e2e suite selection. | Makes non-coverage testing discoverable. |
+| Coverage examples | Shows `--exec --mode coverage --coverage-target 85` and notes `85%` is accepted. | Makes coverage workflow scriptable without weakening the interactive menu. |
+| Specialized example | Shows `--exec --mode specialized --test-kind e2e`. | Makes non-coverage automation discoverable. |
 | Production App Behavior | Describes convention reuse, command detection, approval gates, runtime/flake risk, skipped targets, and review steps. | Sets realistic expectations for large apps. |
 
 Validation:
@@ -252,12 +260,12 @@ Validation:
 
 ### `agents/openai.yaml`
 
-High-level overview: this UI metadata now describes codex-test as a
-production-ready testing workflow.
+High-level overview: this UI metadata now describes codex-test as a numbered
+testing workflow menu that waits for the user's choice.
 
 | Part | What it does | Why it matters |
 | --- | --- | --- |
-| `default_prompt` | Adds "production-ready testing workflow". | The UI prompt matches the updated skill direction. |
+| `default_prompt` | Says to show the numbered testing workflow menu and wait for the user's choice. | The UI prompt matches the strict interactive flow. |
 | `short_description` | Keeps the concise "Choose, improve, validate, and explain tests" description. | Still fits the skill chip while covering the new menu behavior. |
 
 Validation:
@@ -344,7 +352,7 @@ For this repository, `bash scripts/analyze.sh .` reported:
 
 | Command | Result | Details |
 | --- | --- | --- |
-| `bash tests/run.sh` | Passed | 16 passing, 0 failing. |
+| `bash tests/run.sh` | Passed | 18 passing, 0 failing. |
 | `bash scripts/analyze.sh .` | Passed | Reports expected shell-only unknown stack plus new command fields. |
 | `python3 /Users/pvaldes/.codex/skills/.system/skill-creator/scripts/quick_validate.py .` | Passed | Skill is valid. |
 | `git diff --check` | Passed | No whitespace errors. |

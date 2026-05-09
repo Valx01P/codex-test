@@ -76,7 +76,8 @@ From the project you want to test:
 codex test
 ```
 
-Codex will offer three options before it starts:
+Codex will offer three numbered options before it starts. It waits for you to
+reply with `1`, `2`, or `3`; it does not infer the workflow from your goal text.
 
 1. **Recommended Test Scan**: inspect the repo, find the best high-impact test
    targets, propose a plan, then generate and validate the approved tests.
@@ -93,24 +94,27 @@ To focus on one area:
 codex test --goal "focus on checkout form validation"
 ```
 
-To preselect coverage mode:
+This still shows the numbered menu first. The goal is used as context after you
+choose `1`, `2`, or `3`.
+
+For non-interactive coverage mode:
 
 ```bash
-codex test --mode coverage --coverage-target 85
+codex test --exec --mode coverage --coverage-target 85
 ```
 
 `--coverage-target` also accepts a percent sign, for example `85%`.
 
-To preselect a specialized test suite:
+For a non-interactive specialized test suite:
 
 ```bash
-codex test --mode specialized --test-kind e2e --goal "checkout smoke flow"
+codex test --exec --mode specialized --test-kind e2e --goal "checkout smoke flow"
 ```
 
 To let it run without stopping for small approvals:
 
 ```bash
-codex test --exec --go-ham
+codex test --exec --mode recommended --go-ham
 ```
 
 Use `--go-ham` only in a repo you trust. It still avoids dependency installs,

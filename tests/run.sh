@@ -304,10 +304,12 @@ SH
   line_count="$(wc -l < "$capture" | tr -d '[:space:]')"
 
   [[ "$line_count" == "1" ]] || fail "expected one codex argument, got $line_count: $output" || return 1
-  assert_contains "$output" 'Use $codex-test. Before running commands or editing files' || return 1
+  assert_contains "$output" 'Use $codex-test. Before running commands, inspecting the repository' || return 1
   assert_contains "$output" 'Recommended Test Scan' || return 1
   assert_contains "$output" 'Increase Test Coverage' || return 1
   assert_contains "$output" 'Specialized Test Development' || return 1
+  assert_contains "$output" 'Wait for the user to reply with 1, 2, or 3' || return 1
+  assert_contains "$output" 'Do not infer the workflow from the user goal' || return 1
   assert_contains "$output" 'CODEX-TEST-REPORT.md with a high-level overview' || return 1
   assert_contains "$output" 'CI/runtime and flake-risk notes' || return 1
 }
@@ -344,11 +346,37 @@ SH
   assert_contains "$output" "never" || return 1
   assert_contains "$output" "--sandbox" || return 1
   assert_contains "$output" "workspace-write" || return 1
-  assert_contains "$output" 'Use $codex-test in non-interactive mode.' || return 1
+  assert_contains "$output" 'Use $codex-test in non-interactive mode with the explicitly requested workflow mode.' || return 1
+  assert_contains "$output" 'Do not infer a workflow from the user goal.' || return 1
   assert_contains "$output" "Requested testing workflow mode: coverage." || return 1
   assert_contains "$output" "Requested coverage target: 85%." || return 1
   assert_contains "$output" "Stop after writing the proposed plan in chat. Do not edit files." || return 1
   assert_contains "$output" "User testing goal: focus on checkout form validation" || return 1
+}
+
+test_codex_test_exec_requires_mode() {
+  local tmp stderr status
+  tmp="$(make_temp_dir)"
+
+  PATH="/usr/bin:/bin" bash "$ROOT_DIR/codex-test" --exec > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
+  status=$?
+  stderr="$(cat "$tmp/stderr.txt")"
+
+  [[ "$status" == "2" ]] || fail "expected exit status 2, got $status" || return 1
+  assert_contains "$stderr" "--exec requires --mode recommended, --mode coverage, or --mode specialized" || return 1
+}
+
+test_codex_test_interactive_rejects_mode() {
+  local tmp stderr status
+  tmp="$(make_temp_dir)"
+
+  PATH="/usr/bin:/bin" bash "$ROOT_DIR/codex-test" --mode coverage > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
+  status=$?
+  stderr="$(cat "$tmp/stderr.txt")"
+
+  [[ "$status" == "2" ]] || fail "expected exit status 2, got $status" || return 1
+  assert_contains "$stderr" "--mode is only supported with --exec" || return 1
+  assert_contains "$stderr" "Interactive codex-test always asks the user to choose 1, 2, or 3" || return 1
 }
 
 test_codex_test_rejects_invalid_mode() {
@@ -380,7 +408,7 @@ test_codex_test_reports_missing_codex_cli() {
   local tmp stderr status
   tmp="$(make_temp_dir)"
 
-  PATH="/usr/bin:/bin" bash "$ROOT_DIR/codex-test" --exec > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
+  PATH="/usr/bin:/bin" bash "$ROOT_DIR/codex-test" > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
   status=$?
   stderr="$(cat "$tmp/stderr.txt")"
 
@@ -522,6 +550,8 @@ run_test "report.sh supports legacy report fallback" test_report_finalizer_suppo
 run_test "codex-test --version works without Codex CLI" test_codex_test_version_does_not_require_codex_cli
 run_test "codex-test builds default prompt without optional args" test_codex_test_builds_default_prompt_without_optional_args
 run_test "codex-test builds safe exec prompt and flags" test_codex_test_builds_safe_exec_prompt_and_flags
+run_test "codex-test --exec requires mode" test_codex_test_exec_requires_mode
+run_test "codex-test interactive rejects mode" test_codex_test_interactive_rejects_mode
 run_test "codex-test rejects invalid mode" test_codex_test_rejects_invalid_mode
 run_test "codex-test rejects conflicting mode options" test_codex_test_rejects_conflicting_mode_options
 run_test "codex-test reports missing Codex CLI" test_codex_test_reports_missing_codex_cli

@@ -8,8 +8,8 @@ REPORT_FILE="CODEX-TEST-REPORT.md"
 SHELL_MARKER_START="# >>> codex-test shell integration >>>"
 SHELL_MARKER_END="# <<< codex-test shell integration <<<"
 
-DEFAULT_PROMPT='Use $codex-test. Before running commands or editing files, offer the user three testing workflow options: Recommended Test Scan, Increase Test Coverage, and Specialized Test Development. If the user already provided a goal or mode, infer the mode and proceed. Then analyze the repository, propose a prioritized production-ready plan, generate approved tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps.'
-EXEC_PROMPT='Use $codex-test in non-interactive mode. Select the workflow from the explicit mode or goal; otherwise use Recommended Test Scan. For Increase Test Coverage, target 80% unless another threshold is provided and cover lower-complexity meaningful gaps before more complex gaps. Generate focused production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps. Do not install dependencies or edit product source unless they are already part of the repository setup.'
+DEFAULT_PROMPT='Use $codex-test. Before running commands, inspecting the repository, proposing a plan, or editing files, show the user exactly three numbered testing workflow options: 1. Recommended Test Scan, 2. Increase Test Coverage, 3. Specialized Test Development. Wait for the user to reply with 1, 2, or 3. Do not infer the workflow from the user goal, prior context, or any other text. After the user selects a number, run that workflow, generate approved production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps.'
+EXEC_PROMPT='Use $codex-test in non-interactive mode with the explicitly requested workflow mode. Do not infer a workflow from the user goal. For Increase Test Coverage, target 80% unless another threshold is provided and cover lower-complexity meaningful gaps before more complex gaps. Generate focused production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps. Do not install dependencies or edit product source unless they are already part of the repository setup.'
 
 usage() {
   cat <<EOF
@@ -19,11 +19,12 @@ Agentic test planning, generation, validation, and reporting for Codex.
 
 Usage:
   codex-test                     Open Codex with the codex-test workflow
-  codex-test --exec              Run non-interactively with a bounded default plan
-  codex-test --exec --go-ham     Run headless with approval policy "never"
+  codex-test --exec --mode MODE  Run non-interactively with an explicit mode
+  codex-test --exec --mode MODE --go-ham
+                                 Run headless with approval policy "never"
   codex-test --plan-only         Inspect the repo and stop after the proposed plan
   codex-test --goal "..."        Add a testing goal, bug, workflow, or area to focus on
-  codex-test --mode "..."        Preselect recommended, coverage, or specialized
+  codex-test --mode "..."        Set exec mode: recommended, coverage, or specialized
   codex-test --coverage-target N Set a coverage target for coverage mode
   codex-test --test-kind "..."   Focus specialized tests, e.g. e2e or regression
   codex-test --install           Install the skill, wrapper, and "codex test"
@@ -37,24 +38,26 @@ Usage:
 Examples:
   codex-test
   codex-test --goal "focus on checkout form validation"
-  codex-test --mode coverage --coverage-target 85
-  codex-test --mode specialized --test-kind e2e --goal "checkout smoke flow"
-  codex-test --exec --go-ham --goal "modern Next.js frontend coverage"
+  codex-test --exec --mode coverage --coverage-target 85
+  codex-test --exec --mode specialized --test-kind e2e --goal "checkout smoke flow"
+  codex-test --exec --mode coverage --go-ham --goal "modern Next.js frontend coverage"
   codex-test --install-repo
 
 What it does:
   1. Offers three workflow options before starting:
      Recommended Test Scan, Increase Test Coverage, or Specialized Test Development
-  2. Scans the repo, dependencies, and existing tests
-  3. Recommends high-impact unit, component, integration, UI, e2e, or domain tests
-  4. Lets an interactive user adjust the plan before edits
-  5. Generates tests that match local conventions
-  6. Runs narrow validation commands
-  7. Writes ${REPORT_FILE} as a human-reviewable draft
+  2. Waits for an interactive user to reply with 1, 2, or 3
+  3. Scans the repo, dependencies, and existing tests
+  4. Recommends high-impact unit, component, integration, UI, e2e, or domain tests
+  5. Lets an interactive user adjust the plan before edits
+  6. Generates tests that match local conventions
+  7. Runs narrow validation commands
+  8. Writes ${REPORT_FILE} as a human-reviewable draft
 
 Approval modes:
   Default interactive runs use Codex's normal approval flow.
-  --exec uses workspace-write sandboxing so tests and the report can be written.
+  --exec requires --mode recommended, --mode coverage, or --mode specialized.
+  It uses workspace-write sandboxing so tests and the report can be written.
   --go-ham passes --ask-for-approval never while keeping workspace-write
   sandboxing. Use it only in a trusted repository.
 
@@ -633,6 +636,16 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$MODE" == "exec" && -z "$TEST_MODE" ]]; then
+  err "--exec requires --mode recommended, --mode coverage, or --mode specialized"
+  exit 2
+fi
+
+if [[ "$MODE" != "exec" && -n "$TEST_MODE" ]]; then
+  err "--mode is only supported with --exec. Interactive codex-test always asks the user to choose 1, 2, or 3."
+  exit 2
+fi
 
 if ! command -v codex >/dev/null 2>&1; then
   err "Codex CLI not found. Install it with: npm install -g @openai/codex"

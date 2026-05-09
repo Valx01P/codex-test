@@ -15,8 +15,9 @@ without making them re-explain the process.
 
 ## Core Behavior
 
-1. Offer the testing workflow options before running commands or changing files,
-   unless the user already chose a mode or started Codex non-interactively.
+1. Offer the testing workflow options before running commands, inspecting the
+   repository, or changing files, then wait for the user to reply with `1`, `2`,
+   or `3`.
 2. Inspect the repository before recommending tests.
 3. Present a short testing brief and proposed plan before writing tests when the
    user is available.
@@ -27,9 +28,14 @@ without making them re-explain the process.
    or updated file, why it exists, what each part does, what changed, impact,
    validation results, remaining gaps, and continuous-improvement follow-ups.
 
-If the user started Codex non-interactively and cannot approve a plan, proceed
-with a conservative default plan: up to 5 high-impact targets, no dependency
-installation unless already available, and no product source edits.
+Never infer a workflow choice from the user's goal text in an interactive
+session. A focus such as "checkout e2e", "80% coverage", or "audit tests" is
+context for the eventual workflow, but the workflow does not start until the
+user chooses `1`, `2`, or `3`.
+
+If Codex is running non-interactively, require an explicit workflow mode from
+the launcher. If no explicit mode is present, stop and report that `--mode
+recommended`, `--mode coverage`, or `--mode specialized` is required.
 
 ## Phase 0: Align Scope
 
@@ -48,30 +54,22 @@ Choose a testing workflow:
    suite or risk area, such as e2e, regression, feature, API, contract,
    accessibility, performance, backend, or Next.js/frontend workflows.
 
-Reply with 1, 2, or 3, plus any focus area or coverage target.
+Reply with `1`, `2`, or `3`.
 ```
 
-If the user already expressed a goal, infer the mode and say which one you are
-using. Examples:
+If the user replies with anything other than a clear `1`, `2`, or `3`, ask them
+to choose one of those numbers. Do not inspect the repo, run commands, propose a
+plan, or edit files until a valid number is received.
 
-- coverage, 80%, threshold, uncovered, or branches -> Increase Test Coverage
-- e2e, regression, feature, API, contract, accessibility -> Specialized Test
-  Development
-- audit, scan, harden, find tests, or no specific goal -> Recommended Test Scan
-
-Ask for specificity only if the mode is still unclear and the session is
-interactive:
-
-- "Do you want a broad coverage pass, or should I focus on a workflow, bug,
-  component, route, or domain area?"
-- "Should I stop after the plan, or proceed after the plan with the highest
-  impact tests?"
+After a valid number is received, restate the selected workflow and use any
+previously provided goal text as scope details. Ask for more specificity only if
+the selected workflow cannot proceed safely without it.
 
 Offer autonomy without hiding the risk:
 
 ```text
 For fewer approval prompts in a trusted repo, run:
-codex-test --exec --go-ham
+codex-test --exec --mode recommended --go-ham
 
 This keeps Codex in workspace-write sandboxing but uses approval policy
 "never", so it can edit tests and run local commands without repeated prompts.
