@@ -1,9 +1,9 @@
 <!-- generated-by: codex-test -->
-<!-- timestamp: 2026-05-09T23:15:46Z -->
+<!-- timestamp: 2026-05-09T23:26:31Z -->
 
 # Summary
 
-Timestamp: 2026-05-09T23:15:46Z
+Timestamp: 2026-05-09T23:26:31Z
 
 Repository: `/Users/pvaldes/Projects/codex-test`
 
@@ -13,6 +13,11 @@ developer using codex-test on a production app, then tightened the workflow,
 prompts, analyzer output, CLI options, report standard, docs, and tests. A
 follow-up pass aligned the interactive flow with the required behavior: plain
 `codex test` always asks for `1`, `2`, or `3` and never infers the workflow.
+A final compression/report-readability pass reduced the main AI-loaded
+instructions while keeping the same behavior. `SKILL.md` is now 229 lines and
+`references/reporting-standard.md` is now 59 lines. The report standard now
+targets concise, grouped reports instead of exhaustive multi-thousand-line
+per-test reports.
 
 Detected stack: Bash and PowerShell wrappers/installers plus Markdown skill
 instructions. The bundled analyzer still reports this repository as `unknown`
@@ -32,10 +37,10 @@ failing tests.
 
 | File | Status | Type | Production value | Validation |
 | --- | --- | --- | --- | --- |
-| `SKILL.md` | Updated | Skill workflow | Adds explicit production repo defaults: approval gates, monorepo awareness, CI/runtime and flake-risk review, scoped validation, and no real secrets/services. | Skill validator passed. |
-| `references/reporting-standard.md` | Created/updated | Report reference | Defines a developer handoff report with production context, validation tiers, gaps, continuous improvement, and human review packet. | Installed by copy tests. |
-| `codex-test` | Updated | Bash CLI wrapper | Adds validated workflow flags, normalized coverage targets, conflict checks, and production-ready prompt wording. | Harness and syntax checks passed. |
-| `codex-test.ps1` | Updated | PowerShell CLI wrapper | Mirrors Bash workflow flags and validation logic for Windows users. | Not executed because `pwsh` is unavailable. |
+| `SKILL.md` | Updated | Skill workflow | Compressed to a faster-loading 229-line instruction set while preserving strict menu flow, production rules, validation order, and bounded report requirements. | Skill validator passed. |
+| `references/reporting-standard.md` | Created/updated | Report reference | Compressed to a 59-line report standard that targets 300-800 line normal reports and grouped summaries for large batches. | Installed by copy tests. |
+| `codex-test` | Updated | Bash CLI wrapper | Adds validated workflow flags, normalized coverage targets, conflict checks, strict-menu prompt wording, shorter prompt payloads, and concise-report wording. | Harness and syntax checks passed. |
+| `codex-test.ps1` | Updated | PowerShell CLI wrapper | Mirrors Bash workflow flags, validation logic, shorter prompt payloads, and concise-report wording for Windows users. | Not executed because `pwsh` is unavailable. |
 | `scripts/analyze.sh` | Updated | Analyzer | Emits coverage, lint, typecheck, build, monorepo, and workspace signals for production planning. | Harness and syntax checks passed. |
 | `scripts/report.sh` | Updated | Report finalizer | Warns when reports miss `Production Context` or `Human Review Packet`. | Harness and syntax checks passed. |
 | `tests/run.sh` | Updated | Test harness | Covers strict interactive menu prompting, exec mode requirements, mode validation, conflicting options, coverage target normalization, CI command discovery, monorepo signals, and report headings. | `18 passing, 0 failing`. |
@@ -316,7 +321,7 @@ and the second round of improvements.
 | --- | --- | --- |
 | Summary/Overview | Captures workflow, stack, changed files, and validation. | Fast review entry point. |
 | Production Context | Explains user, CI, runtime, flake, data, and dependency assumptions. | Matches the new report standard. |
-| Generated | Gives per-file details and impact. | Developers can understand the diff faster. |
+| Generated | Uses grouped details and representative callouts so developers can understand the diff without a huge report. |
 | Gaps and Continuous Improvement | Records residual risk and next work. | Keeps the handoff honest. |
 | Human Review Packet | Lists exact review steps and commands. | Makes review actionable. |
 

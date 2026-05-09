@@ -310,7 +310,7 @@ SH
   assert_contains "$output" 'Specialized Test Development' || return 1
   assert_contains "$output" 'Wait for the user to reply with 1, 2, or 3' || return 1
   assert_contains "$output" 'Do not infer the workflow from the user goal' || return 1
-  assert_contains "$output" 'CODEX-TEST-REPORT.md with a high-level overview' || return 1
+  assert_contains "$output" 'write a concise CODEX-TEST-REPORT.md with overview tables, grouped details' || return 1
   assert_contains "$output" 'CI/runtime and flake-risk notes' || return 1
 }
 
