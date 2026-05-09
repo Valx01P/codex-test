@@ -1,30 +1,34 @@
 # codex-test
 
-`codex-test` is a Codex skill and CLI shortcut for improving test coverage
-agentically. It inspects a repo, recommends the highest-impact tests, generates
-the approved tests, validates them, and writes `CODEX-TEST-REPORT.md` so humans
-can review what changed and why.
+`codex-test` gives Codex a simple testing workflow:
 
-It is especially tuned for modern frontend and Next.js repositories, but the
-workflow also supports common JS/TS, Python, Go, Rust, Java, and PHP test stacks.
+1. Look through your repo.
+2. Pick useful tests to add.
+3. Explain the plan before changing files.
+4. Write the tests.
+5. Run the tests.
+6. Create `CODEX-TEST-REPORT.md` so you can review what happened.
 
-## Install Codex CLI
+It works best for modern frontend and Next.js apps, and also supports common
+JavaScript/TypeScript, Python, Go, Rust, Java, and PHP projects.
 
-Install Codex first:
+## 1. Install Codex
+
+If you already have Codex installed, skip this.
 
 ```bash
 npm install -g @openai/codex
 ```
 
-macOS users can also use Homebrew:
+On macOS, this also works:
 
 ```bash
 brew install --cask codex
 ```
 
-## Install codex-test
+## 2. Install codex-test
 
-macOS and Linux:
+macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Valx01P/codex-test/main/install.sh | bash
@@ -36,108 +40,102 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/Valx01P/codex-test/main/install.ps1 | iex
 ```
 
-Manual, any platform:
+The installer prints the exact setup line to run next. It looks like this:
 
 ```bash
-git clone https://github.com/Valx01P/codex-test.git
-cd codex-test
-./codex-test --install
+source "$HOME/.zshrc"
 ```
 
-## Use
+You can also just open a new terminal.
 
-Interactive, with a plan before edits:
+## 3. Check It Worked
+
+Run:
 
 ```bash
-codex-test
+codex test --version
 ```
 
-Focus on a specific area:
+Expected output:
+
+```text
+codex-test v0.2.0
+```
+
+If anything seems off, run:
 
 ```bash
-codex-test --goal "focus on checkout form validation and route handlers"
+codex test --check
 ```
 
-Headless run with a bounded default plan:
+## 4. Use It
+
+From the project you want to test:
 
 ```bash
-codex-test --exec
+codex test
 ```
 
-This uses Codex's `workspace-write` sandbox so generated tests and the report can
-be written inside the repo.
-
-Fewer approval prompts in a trusted repo:
+To focus on one area:
 
 ```bash
-codex-test --exec --go-ham
+codex test --goal "focus on checkout form validation"
 ```
 
-`--go-ham` keeps Codex in `workspace-write` sandboxing but sets approval policy
-to `never`, so it can edit tests and run local commands without repeated prompts.
-It does not make dependency installs or destructive actions part of the workflow.
+To let it run without stopping for small approvals:
 
-Inside any Codex session:
+```bash
+codex test --exec --go-ham
+```
+
+Use `--go-ham` only in a repo you trust. It still avoids dependency installs,
+destructive actions, and product source edits unless you explicitly ask.
+
+Inside an existing Codex session, you can also type:
 
 ```text
 $codex-test
 ```
 
-## Optional `codex test`
+## What You Get
 
-Codex does not currently let this repo register a native `codex test`
-subcommand. To get that spelling in your shell, print the function and add it to
-your shell profile:
+- New or updated test files.
+- A `CODEX-TEST-REPORT.md` report.
+- A summary of what was tested, why it was chosen, what passed, what failed, and
+  what still needs review.
 
-```bash
-codex-test --print-codex-function
-```
+The report is there so you do not have to blindly trust generated tests.
 
-Then this works:
+## Team Setup
 
-```bash
-codex test --help
-codex test --goal "add component tests for settings"
-```
-
-## Team Install
-
-Install the skill into the current repo and commit it:
+One person can add the skill to a repo:
 
 ```bash
-codex-test --install-repo
+codex test --install-repo
 git add .agents/skills/codex-test
 git commit -m "add codex-test skill"
 ```
 
-Teammates can then invoke `$codex-test` from Codex when working in that repo.
-
-## What Gets Generated
-
-- test files created or updated in the repo's existing convention
-- `CODEX-TEST-REPORT.md` with the plan, reasoning, file-by-file explanations,
-  validation commands and results, skipped targets, and remaining gaps
-
-The report is meant to make review manageable. You should be able to inspect the
-report and `git diff` without blindly trusting generated tests.
+Each teammate should still run the installer once on their own machine so the
+`codex test` command works in their terminal.
 
 ## Uninstall
 
-macOS and Linux:
+macOS, Linux, or Windows:
+
+```bash
+codex test --uninstall
+```
+
+If your terminal has not loaded `codex test`, use:
 
 ```bash
 codex-test --uninstall
 ```
 
-or:
+## Notes
 
-```bash
-rm -rf "$HOME/.agents/skills/codex-test" "$(command -v codex-test)"
-```
-
-Windows PowerShell:
-
-```powershell
-Remove-Item -Recurse -Force "$HOME\.agents\skills\codex-test" -ErrorAction SilentlyContinue
-Remove-Item -Force "$HOME\bin\codex-test.ps1" -ErrorAction SilentlyContinue
-```
+`codex test` is a shell shortcut installed by this package. Codex does not yet
+let external projects register built-in subcommands, so the installer adds and
+manages a small profile block for you. Re-running install updates the block
+instead of duplicating it.

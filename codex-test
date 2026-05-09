@@ -5,6 +5,8 @@ VERSION="0.2.0"
 SKILL_NAME="codex-test"
 USER_SKILL_DIR="${CODEX_TEST_SKILL_DIR:-$HOME/.agents/skills/$SKILL_NAME}"
 REPORT_FILE="CODEX-TEST-REPORT.md"
+SHELL_MARKER_START="# >>> codex-test shell integration >>>"
+SHELL_MARKER_END="# <<< codex-test shell integration <<<"
 
 DEFAULT_PROMPT='Use $codex-test. Inspect this repository for test gaps, propose a prioritized plan, generate the approved high-impact tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file.'
 EXEC_PROMPT='Use $codex-test in non-interactive mode. Inspect this repository for test gaps, choose up to 5 high-impact targets, generate focused tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file. Do not install dependencies or edit product source unless they are already part of the repository setup.'
@@ -21,11 +23,12 @@ Usage:
   codex-test --exec --go-ham     Run headless with approval policy "never"
   codex-test --plan-only         Inspect the repo and stop after the proposed plan
   codex-test --goal "..."        Add a testing goal, bug, workflow, or area to focus on
-  codex-test --install           Install this skill for the current user
+  codex-test --install           Install the skill, wrapper, and "codex test"
   codex-test --install-repo      Install this skill into .agents/skills/codex-test
   codex-test --uninstall         Remove the user skill and this wrapper if possible
+  codex-test --check             Check whether codex-test is installed correctly
   codex-test --print-codex-function
-                                 Print an optional shell function for "codex test"
+                                 Print the shell function used for "codex test"
   codex-test --help              Show this help
 
 Examples:
@@ -50,8 +53,7 @@ Approval modes:
 
 Codex CLI:
   This repository cannot register a native "codex test" subcommand in Codex.
-  To get that spelling in your shell, run:
-    codex-test --print-codex-function
+  The installer adds a shell function so "codex test" works in your terminal.
 
 EOF
 }
@@ -111,22 +113,306 @@ copy_skill() {
   fi
 }
 
+choose_bin_dir() {
+  if [[ -n "${CODEX_TEST_BIN_DIR:-}" ]]; then
+    printf '%s\n' "$CODEX_TEST_BIN_DIR"
+    return 0
+  fi
+
+  local dir
+  IFS=':' read -r -a path_dirs <<< "${PATH:-}"
+  for dir in "${path_dirs[@]}"; do
+    [[ -z "$dir" ]] && continue
+    [[ "$dir" == "/bin" || "$dir" == "/usr/bin" || "$dir" == "/sbin" || "$dir" == "/usr/sbin" ]] && continue
+    if [[ -d "$dir" && -w "$dir" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
+
+  if [[ -d "/usr/local/bin" && -w "/usr/local/bin" ]]; then
+    printf '%s\n' "/usr/local/bin"
+    return 0
+  fi
+
+  printf '%s\n' "$HOME/.local/bin"
+}
+
+escape_double_quotes() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g'
+}
+
+shell_profiles() {
+  if [[ -n "${CODEX_TEST_SHELL_PROFILE:-}" ]]; then
+    printf '%s\n' "$CODEX_TEST_SHELL_PROFILE"
+    return 0
+  fi
+
+  case "$(basename "${SHELL:-}")" in
+    zsh)
+      printf '%s\n' "$HOME/.zshrc"
+      ;;
+    bash)
+      printf '%s\n' "$HOME/.bashrc"
+      if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+        printf '%s\n' "$HOME/.bash_profile"
+      fi
+      ;;
+    fish)
+      printf '%s\n' "$HOME/.config/fish/config.fish"
+      ;;
+    *)
+      printf '%s\n' "$HOME/.profile"
+      ;;
+  esac
+}
+
+all_known_shell_profiles() {
+  printf '%s\n' \
+    "$HOME/.zshrc" \
+    "$HOME/.bashrc" \
+    "$HOME/.bash_profile" \
+    "$HOME/.profile" \
+    "$HOME/.config/fish/config.fish"
+}
+
+write_shell_block() {
+  local profile="$1"
+  local wrapper="$2"
+  local tmp
+  local escaped_wrapper
+
+  mkdir -p "$(dirname "$profile")"
+  tmp="$(mktemp)"
+  if [[ -f "$profile" ]]; then
+    awk -v start="$SHELL_MARKER_START" -v end="$SHELL_MARKER_END" '
+      $0 == start { skip = 1; next }
+      $0 == end { skip = 0; next }
+      !skip { print }
+    ' "$profile" > "$tmp"
+  else
+    : > "$tmp"
+  fi
+
+  escaped_wrapper="$(escape_double_quotes "$wrapper")"
+  {
+    cat "$tmp"
+    printf '\n%s\n' "$SHELL_MARKER_START"
+    printf '# Enables: codex test ...\n'
+    if [[ "$(basename "$profile")" == "config.fish" ]]; then
+      printf 'function codex\n'
+      printf '  if test (count $argv) -gt 0; and test $argv[1] = test\n'
+      printf '    set -e argv[1]\n'
+      printf '    "%s" $argv\n' "$escaped_wrapper"
+      printf '  else\n'
+      printf '    command codex $argv\n'
+      printf '  end\n'
+      printf 'end\n'
+    else
+      printf 'codex() {\n'
+      printf '  if [ "$#" -gt 0 ] && [ "$1" = "test" ]; then\n'
+      printf '    shift\n'
+      printf '    "%s" "$@"\n' "$escaped_wrapper"
+      printf '  else\n'
+      printf '    command codex "$@"\n'
+      printf '  fi\n'
+      printf '}\n'
+    fi
+    printf '%s\n' "$SHELL_MARKER_END"
+  } > "$profile"
+  rm -f "$tmp"
+}
+
+install_shell_integration() {
+  local wrapper="$1"
+  local profile
+  local installed=""
+
+  [[ "${CODEX_TEST_NO_SHELL:-}" == "1" ]] && return 0
+
+  while IFS= read -r profile; do
+    [[ -z "$profile" ]] && continue
+    write_shell_block "$profile" "$wrapper"
+    installed="${installed}${profile}"$'\n'
+  done < <(shell_profiles)
+
+  if [[ -n "$installed" ]]; then
+    printf 'Shell integration installed for:\n'
+    printf '%s' "$installed" | sed '/^$/d; s/^/  /'
+  fi
+}
+
+shell_reload_command() {
+  if [[ -n "${CODEX_TEST_SHELL_PROFILE:-}" ]]; then
+    printf 'source "%s"\n' "$CODEX_TEST_SHELL_PROFILE"
+    return 0
+  fi
+
+  case "$(basename "${SHELL:-}")" in
+    zsh)
+      printf 'source "%s"\n' "$HOME/.zshrc"
+      ;;
+    bash)
+      printf 'source "%s"\n' "$HOME/.bashrc"
+      ;;
+    fish)
+      printf 'source "%s"\n' "$HOME/.config/fish/config.fish"
+      ;;
+    *)
+      printf 'restart your terminal\n'
+      ;;
+  esac
+}
+
+verify_shell_integration() {
+  local profile="$1"
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+
+  case "$shell_name" in
+    zsh)
+      command -v zsh >/dev/null 2>&1 && zsh -lc "source '$profile' >/dev/null 2>&1; codex test --version" >/dev/null 2>&1
+      ;;
+    bash)
+      command -v bash >/dev/null 2>&1 && bash -lc "source '$profile' >/dev/null 2>&1; codex test --version" >/dev/null 2>&1
+      ;;
+    fish)
+      command -v fish >/dev/null 2>&1 && fish -c "source '$profile' >/dev/null 2>&1; codex test --version" >/dev/null 2>&1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+finish_setup_message() {
+  local wrapper="$1"
+  local profile="$2"
+  local reload_cmd
+
+  reload_cmd="$(shell_reload_command)"
+  if "$wrapper" --version >/dev/null 2>&1; then
+    printf 'Verified: codex-test --version\n'
+  fi
+  if [[ -n "$profile" ]] && verify_shell_integration "$profile"; then
+    printf 'Verified in a fresh shell: codex test --version\n'
+  fi
+
+  printf '\nUse it now:\n'
+  printf '  %s\n' "$reload_cmd"
+  printf '  codex test --version\n'
+  printf '\nOr open a new terminal and run:\n'
+  printf '  codex test\n'
+}
+
+remove_shell_block() {
+  local profile="$1"
+  local tmp
+
+  [[ -f "$profile" ]] || return 0
+  tmp="$(mktemp)"
+  awk -v start="$SHELL_MARKER_START" -v end="$SHELL_MARKER_END" '
+    $0 == start { skip = 1; changed = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+    END { if (!changed) exit 2 }
+  ' "$profile" > "$tmp" || {
+    rm -f "$tmp"
+    return 0
+  }
+  mv "$tmp" "$profile"
+  printf 'Removed shell integration from %s\n' "$profile"
+}
+
+uninstall_shell_integration() {
+  local profile
+  if [[ -n "${CODEX_TEST_SHELL_PROFILE:-}" ]]; then
+    remove_shell_block "$CODEX_TEST_SHELL_PROFILE"
+  fi
+  while IFS= read -r profile; do
+    [[ -z "$profile" ]] && continue
+    remove_shell_block "$profile"
+  done < <(all_known_shell_profiles)
+}
+
+check_install() {
+  local wrapper current_dir current_script
+  local status=0
+
+  wrapper="$(command -v codex-test 2>/dev/null || true)"
+  current_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  current_script="$current_dir/$(basename "${BASH_SOURCE[0]}")"
+  if [[ -z "$wrapper" && -f "$current_script" ]]; then
+    wrapper="$current_script"
+  fi
+  printf 'codex-test check\n'
+  printf '\n'
+
+  if [[ -n "$wrapper" ]]; then
+    printf '[ok] Wrapper: %s\n' "$wrapper"
+  else
+    printf '[warn] Wrapper not found on PATH. Run the installer again.\n'
+    status=1
+  fi
+
+  if [[ -f "$USER_SKILL_DIR/SKILL.md" ]]; then
+    printf '[ok] Skill: %s\n' "$USER_SKILL_DIR"
+  else
+    printf '[warn] Skill not found at %s\n' "$USER_SKILL_DIR"
+    status=1
+  fi
+
+  if command -v codex >/dev/null 2>&1; then
+    printf '[ok] Codex CLI: %s\n' "$(command -v codex)"
+  else
+    printf '[warn] Codex CLI not found. Install it with: npm install -g @openai/codex\n'
+    status=1
+  fi
+
+  if [[ -n "$wrapper" ]] && "$wrapper" --version >/dev/null 2>&1; then
+    printf '[ok] Version: '
+    "$wrapper" --version
+  fi
+
+  printf '\n'
+  if (( status == 0 )); then
+    printf 'Ready. Try: codex test\n'
+  else
+    printf 'Not fully ready. Re-run install, then run: codex test --check\n'
+  fi
+  return "$status"
+}
+
 install_user_skill() {
-  local src
+  local src bin_dir wrapper primary_profile
   src="$(find_source_dir)" || {
     err "cannot find the codex-test source directory"
     exit 1
   }
 
   copy_skill "$src" "$USER_SKILL_DIR"
+  bin_dir="$(choose_bin_dir)"
+  mkdir -p "$bin_dir"
+  wrapper="$bin_dir/codex-test"
+  if [[ -f "$src/codex-test" ]]; then
+    cp "$src/codex-test" "$wrapper"
+  else
+    cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")" "$wrapper"
+  fi
+  chmod +x "$wrapper"
+  install_shell_integration "$wrapper"
+  primary_profile="$(shell_profiles | head -1)"
 
   printf 'Installed %s skill to %s\n' "$SKILL_NAME" "$USER_SKILL_DIR"
-  printf 'Use it in Codex as $%s, or run codex-test from a repository.\n' "$SKILL_NAME"
+  printf 'Installed wrapper to %s\n' "$wrapper"
+  printf 'Use: codex test\n'
+  printf 'Inside Codex, use: $%s\n' "$SKILL_NAME"
   printf 'If Codex is already running and the skill does not appear, restart Codex.\n'
+  finish_setup_message "$wrapper" "$primary_profile"
 }
 
 install_repo_skill() {
-  local src dest
+  local src dest wrapper primary_profile
   src="$(find_source_dir)" || {
     err "cannot find the codex-test source directory"
     exit 1
@@ -134,14 +420,23 @@ install_repo_skill() {
 
   dest=".agents/skills/$SKILL_NAME"
   copy_skill "$src" "$dest"
+  wrapper="$(command -v codex-test 2>/dev/null || true)"
+  if [[ -z "$wrapper" ]]; then
+    wrapper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  fi
+  install_shell_integration "$wrapper"
+  primary_profile="$(shell_profiles | head -1)"
 
   printf 'Installed repo-local skill to %s\n' "$dest"
-  printf 'Commit that directory so teammates get the same workflow.\n'
+  printf 'Commit this directory so teammates get the same Codex skill.\n'
+  printf 'This machine can now use: codex test\n'
+  finish_setup_message "$wrapper" "$primary_profile"
 }
 
 uninstall_user_skill() {
   local wrapper current_script current_dir
   rm -rf "$USER_SKILL_DIR"
+  uninstall_shell_integration
 
   wrapper="$(command -v codex-test 2>/dev/null || true)"
   current_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -162,15 +457,20 @@ uninstall_user_skill() {
 }
 
 print_codex_function() {
-  cat <<'EOF'
+  local wrapper
+  wrapper="$(command -v codex-test 2>/dev/null || true)"
+  if [[ -z "$wrapper" ]]; then
+    wrapper="codex-test"
+  fi
+  cat <<EOF
 # Add this to ~/.zshrc, ~/.bashrc, or your shell profile, then restart the shell.
 # It forwards "codex test ..." to codex-test and leaves every other codex command alone.
 codex() {
-  if [ "$#" -gt 0 ] && [ "$1" = "test" ]; then
+  if [ "\$#" -gt 0 ] && [ "\$1" = "test" ]; then
     shift
-    command codex-test "$@"
+    "$wrapper" "\$@"
   else
-    command codex "$@"
+    command codex "\$@"
   fi
 }
 EOF
@@ -220,6 +520,10 @@ while [[ $# -gt 0 ]]; do
     --uninstall)
       uninstall_user_skill
       exit 0
+      ;;
+    --check|doctor)
+      check_install
+      exit $?
       ;;
     --print-codex-function)
       print_codex_function

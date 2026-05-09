@@ -11,6 +11,13 @@ if ($env:CODEX_TEST_SKILL_DIR) {
 } else {
   $UserSkillDir = Join-Path $HOME ".agents\skills\$SkillName"
 }
+if ($env:CODEX_TEST_BIN_DIR) {
+  $BinDir = $env:CODEX_TEST_BIN_DIR
+} else {
+  $BinDir = Join-Path $HOME "bin"
+}
+$ShellMarkerStart = "# >>> codex-test shell integration >>>"
+$ShellMarkerEnd = "# <<< codex-test shell integration <<<"
 
 $DefaultPrompt = 'Use $codex-test. Inspect this repository for test gaps, propose a prioritized plan, generate the approved high-impact tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file.'
 $ExecPrompt = 'Use $codex-test in non-interactive mode. Inspect this repository for test gaps, choose up to 5 high-impact targets, generate focused tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file. Do not install dependencies or edit product source unless they are already part of the repository setup.'
@@ -25,9 +32,10 @@ Usage:
   codex-test.ps1 --exec --go-ham    Run with approval policy "never"
   codex-test.ps1 --plan-only        Inspect the repo and stop after the plan
   codex-test.ps1 --goal "..."       Add a testing goal or area to focus on
-  codex-test.ps1 --install          Install this skill for the current user
+  codex-test.ps1 --install          Install the skill, wrapper, and "codex test"
   codex-test.ps1 --install-repo     Install into .agents\skills\codex-test
   codex-test.ps1 --uninstall        Remove the user skill
+  codex-test.ps1 --check            Check whether codex-test is installed
   codex-test.ps1 --help             Show this help
 
 Report:
@@ -76,26 +84,210 @@ function Copy-Skill($Source, $Destination) {
   }
 }
 
+function Remove-ShellBlock($ProfilePath) {
+  if (-not (Test-Path $ProfilePath)) {
+    return
+  }
+
+  $lines = Get-Content $ProfilePath
+  $out = New-Object System.Collections.Generic.List[string]
+  $skip = $false
+  $changed = $false
+  foreach ($line in $lines) {
+    if ($line -eq $ShellMarkerStart) {
+      $skip = $true
+      $changed = $true
+      continue
+    }
+    if ($line -eq $ShellMarkerEnd) {
+      $skip = $false
+      continue
+    }
+    if (-not $skip) {
+      $out.Add($line)
+    }
+  }
+
+  if ($changed) {
+    Set-Content -Path $ProfilePath -Value $out
+  }
+}
+
+function Install-ShellIntegration($WrapperPath) {
+  if ($env:CODEX_TEST_NO_SHELL -eq "1") {
+    return
+  }
+
+  $ProfilePath = if ($env:CODEX_TEST_SHELL_PROFILE) {
+    $env:CODEX_TEST_SHELL_PROFILE
+  } else {
+    $PROFILE.CurrentUserAllHosts
+  }
+
+  $profileDir = Split-Path -Parent $ProfilePath
+  New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+  if (-not (Test-Path $ProfilePath)) {
+    New-Item -ItemType File -Force -Path $ProfilePath | Out-Null
+  }
+
+  Remove-ShellBlock $ProfilePath
+  $safeWrapper = $WrapperPath.Replace("'", "''")
+  $block = @"
+$ShellMarkerStart
+function codex {
+  param([Parameter(ValueFromRemainingArguments = `$true)][string[]] `$CodexArgs)
+  if (`$CodexArgs.Count -gt 0 -and `$CodexArgs[0] -eq "test") {
+    `$remaining = @()
+    if (`$CodexArgs.Count -gt 1) {
+      `$remaining = `$CodexArgs[1..(`$CodexArgs.Count - 1)]
+    }
+    & '$safeWrapper' @remaining
+  } else {
+    `$codexCommand = Get-Command codex.cmd -ErrorAction SilentlyContinue
+    if (-not `$codexCommand) {
+      `$codexCommand = Get-Command codex.exe -ErrorAction SilentlyContinue
+    }
+    if (-not `$codexCommand) {
+      `$codexCommand = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue
+    }
+    if (-not `$codexCommand) {
+      throw "Codex CLI not found."
+    }
+    & `$codexCommand.Source @CodexArgs
+  }
+}
+$ShellMarkerEnd
+"@
+  Add-Content -Path $ProfilePath -Value $block
+  Write-Host "Shell integration installed for: $ProfilePath"
+  Enable-CurrentSessionIntegration $WrapperPath
+  try {
+    codex test --version | Out-Null
+    Write-Host "Verified: codex test --version"
+  } catch {
+    Write-Host "If codex test is not available in this terminal, restart PowerShell."
+  }
+}
+
+function Enable-CurrentSessionIntegration($WrapperPath) {
+  $safeWrapper = $WrapperPath.Replace("'", "''")
+  $script = @"
+function global:codex {
+  param([Parameter(ValueFromRemainingArguments = `$true)][string[]] `$CodexArgs)
+  if (`$CodexArgs.Count -gt 0 -and `$CodexArgs[0] -eq "test") {
+    `$remaining = @()
+    if (`$CodexArgs.Count -gt 1) {
+      `$remaining = `$CodexArgs[1..(`$CodexArgs.Count - 1)]
+    }
+    & '$safeWrapper' @remaining
+  } else {
+    `$codexCommand = Get-Command codex.cmd -ErrorAction SilentlyContinue
+    if (-not `$codexCommand) {
+      `$codexCommand = Get-Command codex.exe -ErrorAction SilentlyContinue
+    }
+    if (-not `$codexCommand) {
+      `$codexCommand = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue
+    }
+    if (-not `$codexCommand) {
+      throw "Codex CLI not found."
+    }
+    & `$codexCommand.Source @CodexArgs
+  }
+}
+"@
+  Invoke-Expression $script
+}
+
 function Install-UserSkill {
   $src = Find-SourceDir
   Copy-Skill $src $UserSkillDir
+  New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+  $wrapper = Join-Path $BinDir "codex-test.ps1"
+  $wrapperSource = Join-Path $src "codex-test.ps1"
+  if (-not (Test-Path $wrapperSource)) {
+    $wrapperSource = $PSCommandPath
+  }
+  Copy-Item $wrapperSource $wrapper -Force
+  Install-ShellIntegration $wrapper
   Write-Host "Installed $SkillName skill to $UserSkillDir"
-  Write-Host "Use it in Codex as `$$SkillName, or run codex-test.ps1 from a repository."
+  Write-Host "Installed wrapper to $wrapper"
+  Write-Host "Use: codex test"
+  Write-Host "Inside Codex, use: `$$SkillName"
 }
 
 function Install-RepoSkill {
   $src = Find-SourceDir
   $dest = ".agents\skills\$SkillName"
   Copy-Skill $src $dest
+  $wrapper = Join-Path (Split-Path -Parent $PSCommandPath) "codex-test.ps1"
+  Install-ShellIntegration $wrapper
   Write-Host "Installed repo-local skill to $dest"
-  Write-Host "Commit that directory so teammates get the same workflow."
+  Write-Host "Commit that directory so teammates get the same Codex skill."
+  Write-Host "This machine can now use: codex test"
 }
 
 function Uninstall-UserSkill {
   if (Test-Path $UserSkillDir) {
     Remove-Item -Recurse -Force $UserSkillDir
   }
+  if ($env:CODEX_TEST_SHELL_PROFILE) {
+    Remove-ShellBlock $env:CODEX_TEST_SHELL_PROFILE
+  }
+  Remove-ShellBlock $PROFILE.CurrentUserAllHosts
+  $wrapper = Join-Path $BinDir "codex-test.ps1"
+  if (Test-Path $wrapper) {
+    try {
+      Remove-Item -Force $wrapper
+      Write-Host "Removed wrapper $wrapper"
+    } catch {
+      Write-Host "Wrapper still exists at $wrapper. Remove it manually if desired."
+    }
+  }
   Write-Host "Removed skill $UserSkillDir"
+}
+
+function Check-Install {
+  $status = 0
+  Write-Host "codex-test check"
+  Write-Host ""
+
+  $wrapper = Get-Command codex-test.ps1 -ErrorAction SilentlyContinue
+  if ($wrapper) {
+    Write-Host "[ok] Wrapper: $($wrapper.Source)"
+  } else {
+    $localWrapper = Join-Path $BinDir "codex-test.ps1"
+    if (Test-Path $localWrapper) {
+      Write-Host "[ok] Wrapper: $localWrapper"
+    } elseif (Test-Path $PSCommandPath) {
+      Write-Host "[ok] Wrapper: $PSCommandPath"
+    } else {
+      Write-Host "[warn] Wrapper not found. Run the installer again."
+      $status = 1
+    }
+  }
+
+  if (Test-Path (Join-Path $UserSkillDir "SKILL.md")) {
+    Write-Host "[ok] Skill: $UserSkillDir"
+  } else {
+    Write-Host "[warn] Skill not found at $UserSkillDir"
+    $status = 1
+  }
+
+  $codex = Get-Command codex -ErrorAction SilentlyContinue
+  if ($codex) {
+    Write-Host "[ok] Codex CLI: $($codex.Source)"
+  } else {
+    Write-Host "[warn] Codex CLI not found. Install it with: npm install -g @openai/codex"
+    $status = 1
+  }
+
+  Write-Host ""
+  if ($status -eq 0) {
+    Write-Host "Ready. Try: codex test"
+  } else {
+    Write-Host "Not fully ready. Re-run install, then run: codex test --check"
+  }
+  exit $status
 }
 
 $Mode = "interactive"
@@ -124,6 +316,7 @@ for ($i = 0; $i -lt $RemainingArgs.Count; $i++) {
     "--install" { Install-UserSkill; exit 0 }
     "--install-repo" { Install-RepoSkill; exit 0 }
     "--uninstall" { Uninstall-UserSkill; exit 0 }
+    { $_ -in @("--check", "doctor") } { Check-Install }
     { $_ -in @("--help", "-h") } { Show-Usage; exit 0 }
     { $_ -in @("--version", "-v") } { Write-Host "codex-test v$Version"; exit 0 }
     default { $ExtraArgs += $arg }
