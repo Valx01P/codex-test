@@ -1,63 +1,59 @@
 <!-- generated-by: codex-test -->
-<!-- timestamp: 2026-05-09T22:03:56Z -->
+<!-- timestamp: 2026-05-09T22:16:22Z -->
 
 # Summary
 
-Timestamp: 2026-05-09T22:09:37Z
+Timestamp: 2026-05-09T22:16:22Z
 
 Repository: `/Users/pvaldes/Projects/codex-test`
 
-Detected stack: Bash shell scripts for a Codex skill/CLI installer and wrapper. The bundled analyzer did not detect a package manager, language runtime project, or preexisting test runner because this repo has no `package.json`, `pyproject.toml`, `go.mod`, or similar project manifest.
+Detected stack: Bash shell scripts for a Codex skill, CLI wrapper, installer, analyzer, and report finalizer. The bundled analyzer reports `unknown` stack and runner for this repository because it only detects manifest-based JavaScript/TypeScript, Python, Go, Rust, Java, and PHP projects by default.
 
-Test runner: custom dependency-free Bash harness.
+Test runner: custom dependency-free Bash harness at `tests/run.sh`.
 
-Goal: inspect the repository for high-impact test gaps, add focused tests without installing dependencies, validate them, fix the exposed product-script failures after user approval, and document the result.
+Testing goal: inspect the repo for high-impact test gaps, add focused tests without installing dependencies, validate them, and document every file updated. Product source was not edited in this pass.
 
 Plan summary:
 
-1. Cover `scripts/analyze.sh` because repository detection drives the codex-test workflow.
-2. Cover `codex-test` because it is the user-facing CLI wrapper and builds safety-sensitive Codex invocations.
-3. Cover `scripts/report.sh` because it finalizes the human review artifact.
-4. Cover `install.sh` because it copies skill files, installs the wrapper, and modifies shell profile blocks.
+1. Add analyzer coverage for package-manager command selection, especially pnpm script commands.
+2. Add wrapper coverage for repo-local install, install diagnostics, and shell-function printing.
+3. Validate the updated harness and shell syntax.
+4. Record passing tests, failing regression tests, remaining gaps, and review steps in this report.
 
 # Generated
 
 | File | Status | Why it exists |
 | --- | --- | --- |
-| `tests/run.sh` | Created | Adds a self-contained Bash test harness covering the highest-risk shell entrypoints with temporary fixtures and fake commands. |
-| `codex-test` | Updated | Fixes macOS Bash 3.2 compatibility when optional CLI argument arrays are empty under `set -u`. |
-| `install.sh` | Updated | Fixes EXIT cleanup so installer temp directories can be removed without referencing an out-of-scope local variable under `set -u`. |
-| `CODEX-TEST-REPORT.md` | Created | Records the testing plan, changed files, validation results, failing tests, remaining gaps, and review checklist. |
+| `tests/run.sh` | Updated | Adds four high-impact Bash harness tests covering pnpm analyzer commands and currently untested `codex-test` wrapper setup/diagnostic paths. |
+| `CODEX-TEST-REPORT.md` | Updated | Replaces the stale prior report with the current testing plan, file explanations, validation results, failing regression details, and follow-up recommendations. |
 
 ### `tests/run.sh`
 
-Source files covered: `scripts/analyze.sh`, `codex-test`, `scripts/report.sh`, `install.sh`
+Source files covered: `scripts/analyze.sh`, `codex-test`
 
 Priority: P0/P1
 
-Test type: CLI, domain, and installer integration tests
+Test type: domain and CLI integration tests
 
-Why this target was chosen: the repository had no existing tests. The highest-risk behavior is in shell scripts that inspect arbitrary repositories, construct Codex command invocations, finalize reports, and install shell integration. The harness avoids new dependencies and isolates all writes to temporary directories.
+Why this target was chosen: the repo already had a compact dependency-free Bash harness covering the main analyzer, report finalizer, default wrapper invocation, missing Codex CLI error, and stubbed online installer. The remaining highest-risk gaps were package-manager command inference and wrapper-owned install/check utility paths.
+
+New or updated tests:
 
 | Test name | Behavior covered | Why it matters | Category | Edge cases |
 | --- | --- | --- | --- | --- |
-| `analyze.sh detects a Next.js Vitest project` | Detects Next.js, React, Vitest, Testing Library, Playwright, npm scripts, source files, test files, and high-value candidates in a fixture repo. | Incorrect detection would make Codex propose the wrong tests or commands. | Domain/CLI | Mixed source and test files; npm script overrides. |
-| `analyze.sh detects a Python pytest project` | Detects Python, pytest, source/test counts, and default pytest command. | Confirms non-frontend project detection remains useful. | Domain/CLI | `pyproject.toml`-only project. |
-| `analyze.sh treats shell-only repos as unknown` | Keeps a shell-only repo classified as unknown with zero source/test files under current analyzer rules. | Prevents misleading language and runner claims. | Regression | Repo with executable shell file but no supported manifest. |
-| `report.sh adds metadata once` | Adds generated-by metadata and does not duplicate it on a second run. | Report finalization must be idempotent for repeated agent runs. | Regression | Existing report with expected sections. |
-| `report.sh supports legacy report fallback` | Finalizes `TEST-COVERAGE-REPORT.md` when `CODEX-TEST-REPORT.md` is absent. | Preserves compatibility with older report naming. | Regression | Legacy-only report. |
-| `codex-test --version works without Codex CLI` | Confirms version output exits before requiring `codex` on `PATH`. | Users need diagnostics even before Codex is installed. | CLI | Restricted `PATH` with no Codex CLI. |
-| `codex-test builds default prompt without optional args` | Uses a fake `codex` to verify the default interactive wrapper path works when optional arrays are empty. | Covers the same Bash 3.2 empty-array compatibility risk outside `--exec` mode. | CLI integration | Empty optional arrays; default prompt composition. |
-| `codex-test builds safe exec prompt and flags` | Uses a fake `codex` to verify `--exec --go-ham --plan-only --goal` builds the expected prompt and sandbox/approval flags. | This is the main safety contract for non-interactive usage. | CLI integration | Empty optional arg arrays; multi-option prompt composition. |
-| `codex-test reports missing Codex CLI` | Confirms `--exec` fails clearly when `codex` is not installed. | Install and support experience depends on clear failures. | CLI error path | Restricted `PATH`. |
-| `install.sh installs from a stubbed clone` | Uses a fake `git clone` and isolated `HOME`, bin dir, and shell profile to verify copied skill files, installed wrapper, and shell function block. | Installer regressions affect first-run usability and user shell config. | Installer integration | No real network; no real profile writes; no real Codex call. |
+| `analyze.sh uses pnpm script commands` | Fixture repo with `package.json`, `pnpm-lock.yaml`, Vitest, Playwright, and `test`, `test:unit`, `test:ui`, `test:e2e` scripts produces pnpm-flavored commands. | Incorrect command inference would make Codex run the wrong validation command in pnpm projects. | Domain/CLI | Lockfile precedence, multiple script command fields, Vitest and Playwright detection together. |
+| `codex-test --install-repo copies skill without shell profile` | Runs `codex-test --install-repo` in an isolated temporary repo with `CODEX_TEST_NO_SHELL=1`, then expects the repo-local skill files to be copied and no shell profile to be written. | Repo-local installation is a first-run workflow and should not touch user shell config when explicitly disabled. | CLI integration | Isolated `HOME`, no real shell profile writes, no Codex CLI required. |
+| `codex-test --check reports ready with fake Codex CLI` | Uses an isolated fake `codex` executable and fake skill dir to verify `--check` reports wrapper, skill, CLI, version, and ready status. | Support diagnostics need to be reliable without relying on the developer machine's global install state. | CLI diagnostics | Fake external CLI boundary, custom `CODEX_TEST_SKILL_DIR`, restricted `PATH`. |
+| `codex-test --print-codex-function uses PATH wrapper` | Places a fake `codex-test` wrapper on `PATH` and verifies the printed shell function forwards `codex test ...` to that wrapper while preserving normal `codex` fallback. | Users may rely on this output for manual shell setup; it must point at the discovered wrapper. | CLI setup | No Codex CLI required, wrapper path quoting, fallback command preservation. |
 
 Mocking and fixture strategy:
 
-- Temporary directories stand in for target repositories, user homes, bin directories, and shell profiles.
-- A fake `codex` captures arguments so CLI prompt and flag behavior can be asserted without launching Codex.
-- A fake `git` implements the installer clone path by copying this repository into the installer temp directory, avoiding network access.
-- No module under test is mocked; only external command boundaries are replaced.
+| Boundary | Strategy |
+| --- | --- |
+| Target repositories | Temporary directories with minimal fixture files. |
+| Codex CLI | Fake `codex` executable in a temporary `PATH` only for diagnostics and argument-capture tests. |
+| Wrapper discovery | Fake `codex-test` executable in a temporary `PATH` for `--print-codex-function`. |
+| User home and shell profiles | Isolated temporary `HOME`; `CODEX_TEST_NO_SHELL=1` for repo-local install test. |
 
 Validation command and result:
 
@@ -65,70 +61,21 @@ Validation command and result:
 bash tests/run.sh
 ```
 
-Result: passed after fixing the two product-script issues exposed by the generated tests.
+Result: failed with 13 passing tests and 1 failing test.
 
-Observed summary:
+Failing test:
 
-```text
-10 passing, 0 failing
-```
+| Test | Error | Likely cause | Recommended next step |
+| --- | --- | --- | --- |
+| `codex-test --install-repo copies skill without shell profile` | `expected --install-repo to complete; exit 141; stderr:` | `codex-test` line 428 uses `primary_profile="$(shell_profiles | head -1)"` under `set -euo pipefail`. On macOS with `SHELL=/bin/bash`, `shell_profiles` can emit two profile paths, `head -1` exits after the first, and the writer side can terminate with SIGPIPE, yielding exit 141. Similar patterns exist at `codex-test` line 404 and `install.sh` line 268. | Fix product script profile selection without a `head` pipeline, then rerun `bash tests/run.sh`. Product source was not edited in this pass because the codex-test workflow forbids product edits unless the user explicitly expands the task into bug fixing. |
 
-Resolved failures:
+Passing new tests:
 
-| Test | Previous error | Fix |
-| --- | --- | --- |
-| `codex-test builds safe exec prompt and flags` | `/Users/pvaldes/Projects/codex-test/codex-test: line 575: JSON_ARGS[@]: unbound variable` | Builds a non-empty `COMMAND_ARGS` array with conditional appends before calling `exec codex`, avoiding empty-array expansion under macOS Bash 3.2 with `set -u`. |
-| `install.sh installs from a stubbed clone` | `/Users/pvaldes/Projects/codex-test/install.sh: line 295: tmp: unbound variable` | Stores the installer temp directory in a script-level `INSTALL_TMP` variable and uses a cleanup function for the EXIT trap. |
-
-Gaps and recommended follow-ups:
-
-- Add equivalent PowerShell tests for `codex-test.ps1` and `install.ps1` when `pwsh` is available.
-- Add fixture tests for `--install-repo`, `--check`, and `--print-codex-function`.
-- Consider enhancing `scripts/analyze.sh` to recognize shell-script projects if this repo should self-report as a Bash project.
-
-### `codex-test`
-
-Source file: `codex-test`
-
-Priority: P0
-
-Test type: CLI integration regression fix
-
-Why this target was updated: the generated `codex-test builds safe exec prompt and flags` test found that optional empty arrays such as `JSON_ARGS` fail on macOS Bash 3.2 when expanded under `set -u`. This broke `codex-test --exec --go-ham --plan-only --goal ...` before the wrapper could invoke Codex.
-
-Change made: replaced direct `exec codex ... "${ARRAY[@]}" ...` calls with a `COMMAND_ARGS` array that conditionally appends optional arrays only when they have elements, then appends the required prompt before invoking `exec codex`.
-
-Validation:
-
-```bash
-bash tests/run.sh
-bash -n codex-test
-/bin/bash -n codex-test
-```
-
-Result: passed.
-
-### `install.sh`
-
-Source file: `install.sh`
-
-Priority: P0
-
-Test type: installer integration regression fix
-
-Why this target was updated: the generated `install.sh installs from a stubbed clone` test found that `trap 'rm -rf "$tmp"' EXIT` referenced local `tmp` after `main` returned. Under `set -u`, the EXIT trap failed with `tmp: unbound variable`.
-
-Change made: introduced script-level `INSTALL_TMP` state and a `cleanup_tmp` function, then registered `trap cleanup_tmp EXIT`. This keeps cleanup deterministic without relying on a local variable after function scope ends.
-
-Validation:
-
-```bash
-bash tests/run.sh
-bash -n install.sh
-/bin/bash -n install.sh
-```
-
-Result: passed.
+| Test | Result |
+| --- | --- |
+| `analyze.sh uses pnpm script commands` | Passed |
+| `codex-test --check reports ready with fake Codex CLI` | Passed |
+| `codex-test --print-codex-function uses PATH wrapper` | Passed |
 
 ### `CODEX-TEST-REPORT.md`
 
@@ -136,19 +83,19 @@ Source file: repository test workflow artifact
 
 Priority: P1
 
-Test type: documentation/report
+Test type: reporting and review artifact
 
-Why this target was chosen: the codex-test workflow requires a reviewable report explaining every created or updated file, test coverage, validation status, remaining gaps, and follow-up recommendations.
+Why this target was updated: the workflow requires a reviewable report explaining every created or updated file, validation status, failing tests, skipped targets, and follow-up recommendations. The previous report described an earlier baseline and no longer matched the current test additions.
 
 Content covered:
 
 | Section | Purpose |
 | --- | --- |
-| `Summary` | Captures timestamp, repo path, detected stack, runner, and testing goal. |
-| `Generated` | Explains every created or updated file. |
-| `Validation` | Lists commands run and their outcomes. |
-| `Gaps` | Records skipped targets, known failures, and next steps. |
-| `Review Checklist` | Gives the user concrete review commands and files. |
+| `Summary` | Captures timestamp, repo path, detected stack, runner, and current testing goal. |
+| `Generated` | Explains each updated file. |
+| `Validation` | Lists commands run and outcomes. |
+| `Gaps` | Records skipped targets and residual risk. |
+| `Review Checklist` | Gives concrete review commands and files. |
 
 # Validation
 
@@ -156,18 +103,17 @@ Commands run:
 
 | Command | Result |
 | --- | --- |
-| `bash /Users/pvaldes/.agents/skills/codex-test/scripts/analyze.sh .` | Passed. Detected no manifest-based app stack, no existing test runner, and no existing tests. |
-| `bash tests/run.sh` | Passed with 10 passing tests and 0 failing tests. |
+| `bash /Users/pvaldes/.agents/skills/codex-test/scripts/analyze.sh .` | Passed. Reported unknown stack and no manifest-based test runner for this shell-script repository. |
+| `bash tests/run.sh` | Failed with 13 passing tests and 1 failing test. |
 | `bash -n tests/run.sh` | Passed. |
 | `bash -n codex-test` | Passed. |
 | `bash -n install.sh` | Passed. |
-| `/bin/bash -n codex-test` | Passed under macOS Bash 3.2. |
-| `/bin/bash -n install.sh` | Passed under macOS Bash 3.2. |
 | `bash -n scripts/analyze.sh` | Passed. |
 | `bash -n scripts/report.sh` | Passed. |
-| `command -v pwsh` | Failed; PowerShell is not available in this environment. |
+| `/bin/bash -n codex-test` | Passed under macOS Bash. |
+| `/bin/bash -n tests/run.sh` | Passed under macOS Bash. |
 
-No dependency installation was attempted. Product source changes were limited to the two user-approved fixes in `codex-test` and `install.sh`.
+No dependency installation was attempted. No product source files were edited.
 
 # Gaps
 
@@ -175,20 +121,22 @@ Skipped targets:
 
 | Target | Reason |
 | --- | --- |
-| `codex-test.ps1` | PowerShell runtime is not available locally, so tests could not be validated. |
-| `install.ps1` | PowerShell runtime is not available locally, so tests could not be validated. |
-| `SKILL.md` | Mostly workflow documentation; lower immediate regression risk than shell entrypoints. |
-| `agents/openai.yaml` | Static configuration; lower value than executable behavior for this pass. |
-| Full installer network path | The generated test intentionally stubs `git clone` to keep validation deterministic and offline. |
+| `codex-test.ps1` | PowerShell runtime was not validated in this pass; the existing Bash harness is not suitable for PowerShell scripts. |
+| `install.ps1` | Same PowerShell runtime limitation. |
+| `SKILL.md` | Mostly workflow documentation; lower immediate regression risk than executable setup and analyzer behavior. |
+| `agents/openai.yaml` | Static metadata; lower risk than executable shell scripts. |
+| Full installer network path | Existing tests stub clone/download boundaries to keep validation deterministic and offline. |
 
 Remaining risk:
 
-- The custom Bash harness is intentionally minimal; it does not replace a full shell testing framework such as Bats.
-- The analyzer still does not recognize this repository itself as a Bash project, which may be acceptable by design but is worth deciding explicitly.
+- The newly added install-repo regression test currently fails until the profile-selection pipeline bug is fixed in product code.
+- The analyzer still classifies this repository as `unknown`, which may be acceptable by design but means codex-test does not self-identify as a Bash project.
+- The custom Bash harness is intentionally small and dependency-free; it does not provide Bats-style fixtures, TAP output, or per-test process isolation.
 
 # Review Checklist
 
-1. Review `git status --short` and the changed files `codex-test`, `install.sh`, `tests/run.sh`, and `CODEX-TEST-REPORT.md`.
-2. Run `bash tests/run.sh`.
-3. Run syntax checks for `tests/run.sh`, `codex-test`, `install.sh`, `scripts/analyze.sh`, and `scripts/report.sh`.
-4. Run `/bin/bash -n codex-test` and `/bin/bash -n install.sh` on macOS to preserve Bash 3.2 compatibility.
+1. Review `git diff -- tests/run.sh CODEX-TEST-REPORT.md`.
+2. Review the failing regression in `tests/run.sh` before deciding whether to fix `codex-test`.
+3. Run `bash tests/run.sh`.
+4. Run `bash -n tests/run.sh codex-test install.sh scripts/analyze.sh scripts/report.sh`.
+5. If product bug fixing is approved, update the profile-selection logic at `codex-test` lines 404 and 428, and consider the same pattern in `install.sh` line 268.

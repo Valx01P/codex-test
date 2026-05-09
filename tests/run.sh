@@ -116,6 +116,39 @@ JSON
   assert_contains "$output" "./utils/format.ts" || return 1
 }
 
+test_analyze_uses_pnpm_script_commands() {
+  local repo output
+  repo="$(make_temp_dir)"
+
+  mkdir -p "$repo/lib" "$repo/tests"
+  cat > "$repo/package.json" <<'JSON'
+{
+  "scripts": {
+    "test": "vitest run",
+    "test:unit": "vitest run --unit",
+    "test:ui": "vitest --ui",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "vitest": "2.0.0",
+    "@playwright/test": "1.45.0"
+  }
+}
+JSON
+  printf 'lockfileVersion: "9.0"\n' > "$repo/pnpm-lock.yaml"
+  printf 'export const amount = 42;\n' > "$repo/lib/billing.ts"
+  printf 'import { amount } from "../lib/billing";\n' > "$repo/tests/billing.test.ts"
+
+  output="$(bash "$ROOT_DIR/scripts/analyze.sh" "$repo")" || return 1
+
+  assert_contains "$output" "PACKAGE_MANAGER: pnpm" || return 1
+  assert_contains "$output" "TEST_RUNNER: vitest" || return 1
+  assert_contains "$output" "TEST_COMMAND: pnpm test" || return 1
+  assert_contains "$output" "UNIT_TEST_COMMAND: pnpm test:unit" || return 1
+  assert_contains "$output" "UI_TEST_COMMAND: pnpm test:ui" || return 1
+  assert_contains "$output" "E2E_TEST_COMMAND: pnpm test:e2e" || return 1
+}
+
 test_analyze_detects_python_pytest_project() {
   local repo output
   repo="$(make_temp_dir)"
@@ -290,6 +323,84 @@ test_codex_test_reports_missing_codex_cli() {
   assert_contains "$stderr" "npm install -g @openai/codex" || return 1
 }
 
+test_codex_test_install_repo_copies_skill_without_shell_profile() {
+  local tmp repo home output status stderr
+  tmp="$(make_temp_dir)"
+  repo="$tmp/repo"
+  home="$tmp/home"
+  mkdir -p "$repo" "$home"
+
+  (
+    cd "$repo" || exit 1
+    HOME="$home" \
+      SHELL="/bin/bash" \
+      CODEX_TEST_NO_SHELL=1 \
+      PATH="/usr/bin:/bin" \
+      bash "$ROOT_DIR/codex-test" --install-repo
+  ) > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
+  status=$?
+  output="$(cat "$tmp/stdout.txt")"
+  stderr="$(cat "$tmp/stderr.txt")"
+
+  [[ "$status" == "0" ]] || fail "expected --install-repo to complete; exit $status; stderr: $stderr" || return 1
+
+  assert_contains "$output" "Installed repo-local skill to .agents/skills/codex-test" || return 1
+  assert_contains "$output" "Commit this directory so teammates get the same Codex skill." || return 1
+  assert_contains "$output" "Verified: codex-test --version" || return 1
+  assert_not_contains "$output" "Shell integration installed" || return 1
+  assert_file_exists "$repo/.agents/skills/codex-test/SKILL.md" || return 1
+  assert_file_exists "$repo/.agents/skills/codex-test/scripts/analyze.sh" || return 1
+  assert_file_exists "$repo/.agents/skills/codex-test/references/quality-rubric.md" || return 1
+  [[ ! -f "$home/.bashrc" ]] || fail "expected CODEX_TEST_NO_SHELL=1 to avoid writing shell profile" || return 1
+}
+
+test_codex_test_check_reports_ready_with_fake_codex() {
+  local tmp fake_bin skill output status stderr
+  tmp="$(make_temp_dir)"
+  fake_bin="$tmp/bin"
+  skill="$tmp/skill"
+  mkdir -p "$fake_bin" "$skill"
+  printf '# fixture skill\n' > "$skill/SKILL.md"
+
+  cat > "$fake_bin/codex" <<'SH'
+#!/usr/bin/env bash
+printf 'fake codex\n'
+SH
+  chmod +x "$fake_bin/codex"
+
+  CODEX_TEST_SKILL_DIR="$skill" \
+    PATH="$fake_bin:/usr/bin:/bin" \
+    bash "$ROOT_DIR/codex-test" --check > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
+  status=$?
+  output="$(cat "$tmp/stdout.txt")"
+  stderr="$(cat "$tmp/stderr.txt")"
+
+  [[ "$status" == "0" ]] || fail "expected --check to report ready; exit $status; stderr: $stderr" || return 1
+
+  assert_contains "$output" "codex-test check" || return 1
+  assert_contains "$output" "[ok] Wrapper: $ROOT_DIR/codex-test" || return 1
+  assert_contains "$output" "[ok] Skill: $skill" || return 1
+  assert_contains "$output" "[ok] Codex CLI: $fake_bin/codex" || return 1
+  assert_contains "$output" "[ok] Version: codex-test v0.2.0" || return 1
+  assert_contains "$output" "Ready. Try: codex test" || return 1
+}
+
+test_codex_test_print_function_uses_path_wrapper() {
+  local tmp fake_bin wrapper output
+  tmp="$(make_temp_dir)"
+  fake_bin="$tmp/bin"
+  wrapper="$fake_bin/codex-test"
+  mkdir -p "$fake_bin"
+  printf '#!/usr/bin/env bash\nprintf wrapper\\n\n' > "$wrapper"
+  chmod +x "$wrapper"
+
+  output="$(PATH="$fake_bin:/usr/bin:/bin" bash "$ROOT_DIR/codex-test" --print-codex-function)" || return 1
+
+  assert_contains "$output" "# It forwards \"codex test ...\" to codex-test" || return 1
+  assert_contains "$output" "\"$wrapper\" \"\$@\"" || return 1
+  assert_contains "$output" "command codex \"\$@\"" || return 1
+}
+
 test_install_sh_installs_from_stubbed_clone() {
   local tmp fake_bin git_stub output home bin profile status stderr
   tmp="$(make_temp_dir)"
@@ -335,6 +446,7 @@ SH
 }
 
 run_test "analyze.sh detects a Next.js Vitest project" test_analyze_detects_next_vitest_project
+run_test "analyze.sh uses pnpm script commands" test_analyze_uses_pnpm_script_commands
 run_test "analyze.sh detects a Python pytest project" test_analyze_detects_python_pytest_project
 run_test "analyze.sh treats shell-only repos as unknown" test_analyze_handles_shell_only_repo_as_unknown
 run_test "report.sh adds metadata once" test_report_finalizer_is_idempotent
@@ -343,6 +455,9 @@ run_test "codex-test --version works without Codex CLI" test_codex_test_version_
 run_test "codex-test builds default prompt without optional args" test_codex_test_builds_default_prompt_without_optional_args
 run_test "codex-test builds safe exec prompt and flags" test_codex_test_builds_safe_exec_prompt_and_flags
 run_test "codex-test reports missing Codex CLI" test_codex_test_reports_missing_codex_cli
+run_test "codex-test --install-repo copies skill without shell profile" test_codex_test_install_repo_copies_skill_without_shell_profile
+run_test "codex-test --check reports ready with fake Codex CLI" test_codex_test_check_reports_ready_with_fake_codex
+run_test "codex-test --print-codex-function uses PATH wrapper" test_codex_test_print_function_uses_path_wrapper
 run_test "install.sh installs from a stubbed clone" test_install_sh_installs_from_stubbed_clone
 
 printf '\n%d passing, %d failing\n' "$PASS_COUNT" "$FAIL_COUNT"
