@@ -40,7 +40,7 @@ printf 'Fail markers: %s\n' "$fail_count"
 printf 'Size: %s bytes\n' "$size_bytes"
 
 missing=0
-for heading in "Summary" "Generated" "Validation" "Gaps"; do
+for heading in "Summary" "Overview" "Production Context" "Generated" "Validation" "Gaps" "Continuous Improvement" "Human Review Packet"; do
   if ! grep -Eiq "^#+[[:space:]].*$heading" "$REPORT"; then
     printf 'Warning: report may be missing a %s section\n' "$heading" >&2
     missing=$((missing + 1))

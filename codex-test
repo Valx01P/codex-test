@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 SKILL_NAME="codex-test"
 USER_SKILL_DIR="${CODEX_TEST_SKILL_DIR:-$HOME/.agents/skills/$SKILL_NAME}"
 REPORT_FILE="CODEX-TEST-REPORT.md"
 SHELL_MARKER_START="# >>> codex-test shell integration >>>"
 SHELL_MARKER_END="# <<< codex-test shell integration <<<"
 
-DEFAULT_PROMPT='Use $codex-test. Inspect this repository for test gaps, propose a prioritized plan, generate the approved high-impact tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file.'
-EXEC_PROMPT='Use $codex-test in non-interactive mode. Inspect this repository for test gaps, choose up to 5 high-impact targets, generate focused tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file. Do not install dependencies or edit product source unless they are already part of the repository setup.'
+DEFAULT_PROMPT='Use $codex-test. Before running commands or editing files, offer the user three testing workflow options: Recommended Test Scan, Increase Test Coverage, and Specialized Test Development. If the user already provided a goal or mode, infer the mode and proceed. Then analyze the repository, propose a prioritized production-ready plan, generate approved tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps.'
+EXEC_PROMPT='Use $codex-test in non-interactive mode. Select the workflow from the explicit mode or goal; otherwise use Recommended Test Scan. For Increase Test Coverage, target 80% unless another threshold is provided and cover lower-complexity meaningful gaps before more complex gaps. Generate focused production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps. Do not install dependencies or edit product source unless they are already part of the repository setup.'
 
 usage() {
   cat <<EOF
@@ -23,6 +23,9 @@ Usage:
   codex-test --exec --go-ham     Run headless with approval policy "never"
   codex-test --plan-only         Inspect the repo and stop after the proposed plan
   codex-test --goal "..."        Add a testing goal, bug, workflow, or area to focus on
+  codex-test --mode "..."        Preselect recommended, coverage, or specialized
+  codex-test --coverage-target N Set a coverage target for coverage mode
+  codex-test --test-kind "..."   Focus specialized tests, e.g. e2e or regression
   codex-test --install           Install the skill, wrapper, and "codex test"
   codex-test --install-repo      Install this skill into .agents/skills/codex-test
   codex-test --uninstall         Remove the user skill and this wrapper if possible
@@ -34,16 +37,20 @@ Usage:
 Examples:
   codex-test
   codex-test --goal "focus on checkout form validation"
+  codex-test --mode coverage --coverage-target 85
+  codex-test --mode specialized --test-kind e2e --goal "checkout smoke flow"
   codex-test --exec --go-ham --goal "modern Next.js frontend coverage"
   codex-test --install-repo
 
 What it does:
-  1. Scans the repo and existing tests
-  2. Recommends high-impact unit, component, integration, UI, e2e, or domain tests
-  3. Lets an interactive user adjust the plan before edits
-  4. Generates tests that match local conventions
-  5. Runs narrow validation commands
-  6. Writes ${REPORT_FILE} as a human-reviewable draft
+  1. Offers three workflow options before starting:
+     Recommended Test Scan, Increase Test Coverage, or Specialized Test Development
+  2. Scans the repo, dependencies, and existing tests
+  3. Recommends high-impact unit, component, integration, UI, e2e, or domain tests
+  4. Lets an interactive user adjust the plan before edits
+  5. Generates tests that match local conventions
+  6. Runs narrow validation commands
+  7. Writes ${REPORT_FILE} as a human-reviewable draft
 
 Approval modes:
   Default interactive runs use Codex's normal approval flow.
@@ -142,6 +149,37 @@ escape_double_quotes() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g'
 }
 
+normalize_test_mode() {
+  local value="$1"
+  local normalized
+  normalized="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+
+  case "$normalized" in
+    1|recommended|recommend|scan|recommended-scan|recommended-test-scan)
+      printf 'recommended\n'
+      ;;
+    2|coverage|cover|increase-coverage|test-coverage|coverage-growth)
+      printf 'coverage\n'
+      ;;
+    3|specialized|specialised|suite|custom|test-suite|test-development)
+      printf 'specialized\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+normalize_coverage_target() {
+  local value="$1"
+  local normalized
+  normalized="$(printf '%s' "$value" | tr -d '[:space:]%')"
+
+  [[ "$normalized" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  awk -v value="$normalized" 'BEGIN { exit !(value > 0 && value <= 100) }' || return 1
+  printf '%s\n' "$normalized"
+}
+
 shell_profiles() {
   if [[ -n "${CODEX_TEST_SHELL_PROFILE:-}" ]]; then
     printf '%s\n' "$CODEX_TEST_SHELL_PROFILE"
@@ -165,6 +203,15 @@ shell_profiles() {
       printf '%s\n' "$HOME/.profile"
       ;;
   esac
+}
+
+first_shell_profile() {
+  local profile
+  while IFS= read -r profile; do
+    [[ -z "$profile" ]] && continue
+    printf '%s\n' "$profile"
+    return 0
+  done < <(shell_profiles)
 }
 
 all_known_shell_profiles() {
@@ -401,7 +448,7 @@ install_user_skill() {
   fi
   chmod +x "$wrapper"
   install_shell_integration "$wrapper"
-  primary_profile="$(shell_profiles | head -1)"
+  primary_profile="$(first_shell_profile)"
 
   printf 'Installed %s skill to %s\n' "$SKILL_NAME" "$USER_SKILL_DIR"
   printf 'Installed wrapper to %s\n' "$wrapper"
@@ -425,7 +472,7 @@ install_repo_skill() {
     wrapper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
   fi
   install_shell_integration "$wrapper"
-  primary_profile="$(shell_profiles | head -1)"
+  primary_profile="$(first_shell_profile)"
 
   printf 'Installed repo-local skill to %s\n' "$dest"
   printf 'Commit this directory so teammates get the same Codex skill.\n'
@@ -481,6 +528,9 @@ JSON_ARGS=()
 GO_HAM=false
 PLAN_ONLY=false
 GOAL=""
+TEST_MODE=""
+COVERAGE_TARGET=""
+TEST_KIND=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -507,6 +557,46 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       GOAL="$2"
+      shift 2
+      ;;
+    --mode|--workflow)
+      if [[ $# -lt 2 ]]; then
+        err "$1 requires a value"
+        exit 2
+      fi
+      TEST_MODE="$(normalize_test_mode "$2")" || {
+        err "invalid --mode \"$2\". Use recommended, coverage, or specialized."
+        exit 2
+      }
+      shift 2
+      ;;
+    --coverage-target|--target-coverage)
+      if [[ $# -lt 2 ]]; then
+        err "$1 requires a value"
+        exit 2
+      fi
+      if [[ -n "$TEST_MODE" && "$TEST_MODE" != "coverage" ]]; then
+        err "--coverage-target requires --mode coverage"
+        exit 2
+      fi
+      COVERAGE_TARGET="$(normalize_coverage_target "$2")" || {
+        err "invalid --coverage-target \"$2\". Use a number from 1 to 100, such as 80 or 85%."
+        exit 2
+      }
+      TEST_MODE="coverage"
+      shift 2
+      ;;
+    --test-kind|--kind|--suite)
+      if [[ $# -lt 2 ]]; then
+        err "$1 requires a value"
+        exit 2
+      fi
+      if [[ -n "$TEST_MODE" && "$TEST_MODE" != "specialized" ]]; then
+        err "--test-kind requires --mode specialized"
+        exit 2
+      fi
+      TEST_KIND="$2"
+      TEST_MODE="specialized"
       shift 2
       ;;
     --install)
@@ -561,6 +651,15 @@ fi
 
 if [[ -n "$GOAL" ]]; then
   PROMPT="$PROMPT User testing goal: $GOAL"
+fi
+if [[ -n "$TEST_MODE" ]]; then
+  PROMPT="$PROMPT Requested testing workflow mode: $TEST_MODE."
+fi
+if [[ -n "$COVERAGE_TARGET" ]]; then
+  PROMPT="$PROMPT Requested coverage target: $COVERAGE_TARGET%."
+fi
+if [[ -n "$TEST_KIND" ]]; then
+  PROMPT="$PROMPT Requested specialized test kind: $TEST_KIND."
 fi
 
 CODEX_ARGS=()

@@ -78,7 +78,11 @@ test_analyze_detects_next_vitest_project() {
   "scripts": {
     "test": "vitest run",
     "test:unit": "vitest run --unit",
-    "test:e2e": "playwright test"
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "build": "next build"
   },
   "dependencies": {
     "next": "15.0.0",
@@ -91,6 +95,7 @@ test_analyze_detects_next_vitest_project() {
   }
 }
 JSON
+  printf '{}\n' > "$repo/turbo.json"
   printf 'export default function Page() { return null; }\n' > "$repo/app/page.tsx"
   printf 'export const total = 1;\n' > "$repo/lib/checkout.ts"
   printf 'export const format = String;\n' > "$repo/utils/format.ts"
@@ -106,6 +111,12 @@ JSON
   assert_contains "$output" "TEST_COMMAND: npm run test" || return 1
   assert_contains "$output" "UNIT_TEST_COMMAND: npm run test:unit" || return 1
   assert_contains "$output" "E2E_TEST_COMMAND: npm run test:e2e" || return 1
+  assert_contains "$output" "COVERAGE_COMMAND: npm run test:coverage" || return 1
+  assert_contains "$output" "LINT_COMMAND: npm run lint" || return 1
+  assert_contains "$output" "TYPECHECK_COMMAND: npm run typecheck" || return 1
+  assert_contains "$output" "BUILD_COMMAND: npm run build" || return 1
+  assert_contains "$output" "MONOREPO: yes" || return 1
+  assert_contains "$output" "turbo.json" || return 1
   assert_contains "$output" "NEXTJS: yes" || return 1
   assert_contains "$output" "REACT: yes" || return 1
   assert_contains "$output" "TESTING_LIBRARY: yes" || return 1
@@ -113,6 +124,7 @@ JSON
   assert_contains "$output" "SOURCE_FILES: 3" || return 1
   assert_contains "$output" "TEST_FILES: 1" || return 1
   assert_contains "$output" "./app/page.tsx" || return 1
+  assert_contains "$output" "./app/page.tsx (1 lines)" || return 1
   assert_contains "$output" "./utils/format.ts" || return 1
 }
 
@@ -127,7 +139,8 @@ test_analyze_uses_pnpm_script_commands() {
     "test": "vitest run",
     "test:unit": "vitest run --unit",
     "test:ui": "vitest --ui",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "vitest": "2.0.0",
@@ -147,6 +160,7 @@ JSON
   assert_contains "$output" "UNIT_TEST_COMMAND: pnpm test:unit" || return 1
   assert_contains "$output" "UI_TEST_COMMAND: pnpm test:ui" || return 1
   assert_contains "$output" "E2E_TEST_COMMAND: pnpm test:e2e" || return 1
+  assert_contains "$output" "COVERAGE_COMMAND: pnpm coverage" || return 1
 }
 
 test_analyze_detects_python_pytest_project() {
@@ -196,6 +210,14 @@ test_report_finalizer_is_idempotent() {
 
 Generated tests passed.
 
+## Overview
+
+One generated test file.
+
+## Production Context
+
+No production services.
+
 ## Generated
 
 ### `tests/example.test`
@@ -207,6 +229,14 @@ Passing.
 ## Gaps
 
 None.
+
+## Continuous Improvement
+
+No follow-up targets.
+
+## Human Review Packet
+
+Review the generated file.
 MD
 
   first="$(bash "$ROOT_DIR/scripts/report.sh" "$repo")" || return 1
@@ -229,9 +259,13 @@ test_report_finalizer_supports_legacy_report_name() {
 
 Legacy report passed.
 
+## Overview
+## Production Context
 ## Generated
 ## Validation
 ## Gaps
+## Continuous Improvement
+## Human Review Packet
 MD
 
   output="$(bash "$ROOT_DIR/scripts/report.sh" "$repo")" || return 1
@@ -243,7 +277,7 @@ MD
 test_codex_test_version_does_not_require_codex_cli() {
   local output
   output="$(PATH="/usr/bin:/bin" bash "$ROOT_DIR/codex-test" --version)" || return 1
-  [[ "$output" == "codex-test v0.2.0" ]] || fail "unexpected version output: $output"
+  [[ "$output" == "codex-test v0.3.0" ]] || fail "unexpected version output: $output"
 }
 
 test_codex_test_builds_default_prompt_without_optional_args() {
@@ -270,7 +304,12 @@ SH
   line_count="$(wc -l < "$capture" | tr -d '[:space:]')"
 
   [[ "$line_count" == "1" ]] || fail "expected one codex argument, got $line_count: $output" || return 1
-  assert_contains "$output" 'Use $codex-test. Inspect this repository for test gaps' || return 1
+  assert_contains "$output" 'Use $codex-test. Before running commands or editing files' || return 1
+  assert_contains "$output" 'Recommended Test Scan' || return 1
+  assert_contains "$output" 'Increase Test Coverage' || return 1
+  assert_contains "$output" 'Specialized Test Development' || return 1
+  assert_contains "$output" 'CODEX-TEST-REPORT.md with a high-level overview' || return 1
+  assert_contains "$output" 'CI/runtime and flake-risk notes' || return 1
 }
 
 test_codex_test_builds_safe_exec_prompt_and_flags() {
@@ -288,7 +327,7 @@ SH
 
   CODEX_CAPTURE_FILE="$capture" \
     PATH="$fake_bin:/usr/bin:/bin" \
-    bash "$ROOT_DIR/codex-test" --exec --go-ham --plan-only --goal "focus on checkout form validation" \
+    bash "$ROOT_DIR/codex-test" --exec --go-ham --plan-only --mode cover --coverage-target 85% --goal "focus on checkout form validation" \
     > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
   status=$?
   output="$(cat "$tmp/stdout.txt")"
@@ -306,8 +345,35 @@ SH
   assert_contains "$output" "--sandbox" || return 1
   assert_contains "$output" "workspace-write" || return 1
   assert_contains "$output" 'Use $codex-test in non-interactive mode.' || return 1
+  assert_contains "$output" "Requested testing workflow mode: coverage." || return 1
+  assert_contains "$output" "Requested coverage target: 85%." || return 1
   assert_contains "$output" "Stop after writing the proposed plan in chat. Do not edit files." || return 1
   assert_contains "$output" "User testing goal: focus on checkout form validation" || return 1
+}
+
+test_codex_test_rejects_invalid_mode() {
+  local tmp stderr status
+  tmp="$(make_temp_dir)"
+
+  PATH="/usr/bin:/bin" bash "$ROOT_DIR/codex-test" --mode covrage > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
+  status=$?
+  stderr="$(cat "$tmp/stderr.txt")"
+
+  [[ "$status" == "2" ]] || fail "expected exit status 2, got $status" || return 1
+  assert_contains "$stderr" "invalid --mode \"covrage\"" || return 1
+  assert_contains "$stderr" "recommended, coverage, or specialized" || return 1
+}
+
+test_codex_test_rejects_conflicting_mode_options() {
+  local tmp stderr status
+  tmp="$(make_temp_dir)"
+
+  PATH="/usr/bin:/bin" bash "$ROOT_DIR/codex-test" --mode recommended --coverage-target 80 > "$tmp/stdout.txt" 2> "$tmp/stderr.txt"
+  status=$?
+  stderr="$(cat "$tmp/stderr.txt")"
+
+  [[ "$status" == "2" ]] || fail "expected exit status 2, got $status" || return 1
+  assert_contains "$stderr" "--coverage-target requires --mode coverage" || return 1
 }
 
 test_codex_test_reports_missing_codex_cli() {
@@ -351,6 +417,7 @@ test_codex_test_install_repo_copies_skill_without_shell_profile() {
   assert_file_exists "$repo/.agents/skills/codex-test/SKILL.md" || return 1
   assert_file_exists "$repo/.agents/skills/codex-test/scripts/analyze.sh" || return 1
   assert_file_exists "$repo/.agents/skills/codex-test/references/quality-rubric.md" || return 1
+  assert_file_exists "$repo/.agents/skills/codex-test/references/reporting-standard.md" || return 1
   [[ ! -f "$home/.bashrc" ]] || fail "expected CODEX_TEST_NO_SHELL=1 to avoid writing shell profile" || return 1
 }
 
@@ -381,7 +448,7 @@ SH
   assert_contains "$output" "[ok] Wrapper: $ROOT_DIR/codex-test" || return 1
   assert_contains "$output" "[ok] Skill: $skill" || return 1
   assert_contains "$output" "[ok] Codex CLI: $fake_bin/codex" || return 1
-  assert_contains "$output" "[ok] Version: codex-test v0.2.0" || return 1
+  assert_contains "$output" "[ok] Version: codex-test v0.3.0" || return 1
   assert_contains "$output" "Ready. Try: codex test" || return 1
 }
 
@@ -440,6 +507,7 @@ SH
   assert_file_exists "$home/.agents/skills/codex-test/SKILL.md" || return 1
   assert_file_exists "$home/.agents/skills/codex-test/scripts/analyze.sh" || return 1
   assert_file_exists "$home/.agents/skills/codex-test/references/quality-rubric.md" || return 1
+  assert_file_exists "$home/.agents/skills/codex-test/references/reporting-standard.md" || return 1
   assert_executable "$bin/codex-test" || return 1
   assert_contains "$(cat "$profile")" "# >>> codex-test shell integration >>>" || return 1
   assert_contains "$(cat "$profile")" "\"$bin/codex-test\" \"\$@\"" || return 1
@@ -454,6 +522,8 @@ run_test "report.sh supports legacy report fallback" test_report_finalizer_suppo
 run_test "codex-test --version works without Codex CLI" test_codex_test_version_does_not_require_codex_cli
 run_test "codex-test builds default prompt without optional args" test_codex_test_builds_default_prompt_without_optional_args
 run_test "codex-test builds safe exec prompt and flags" test_codex_test_builds_safe_exec_prompt_and_flags
+run_test "codex-test rejects invalid mode" test_codex_test_rejects_invalid_mode
+run_test "codex-test rejects conflicting mode options" test_codex_test_rejects_conflicting_mode_options
 run_test "codex-test reports missing Codex CLI" test_codex_test_reports_missing_codex_cli
 run_test "codex-test --install-repo copies skill without shell profile" test_codex_test_install_repo_copies_skill_without_shell_profile
 run_test "codex-test --check reports ready with fake Codex CLI" test_codex_test_check_reports_ready_with_fake_codex

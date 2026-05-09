@@ -88,6 +88,15 @@ shell_profiles() {
   esac
 }
 
+first_shell_profile() {
+  local profile
+  while IFS= read -r profile; do
+    [[ -z "$profile" ]] && continue
+    printf '%s\n' "$profile"
+    return 0
+  done < <(shell_profiles)
+}
+
 write_shell_block() {
   local profile="$1"
   local wrapper="$2"
@@ -238,6 +247,7 @@ download_repo() {
   curl -fsSL "$base/scripts/analyze.sh" -o "$src/scripts/analyze.sh"
   curl -fsSL "$base/scripts/report.sh" -o "$src/scripts/report.sh"
   curl -fsSL "$base/references/quality-rubric.md" -o "$src/references/quality-rubric.md"
+  curl -fsSL "$base/references/reporting-standard.md" -o "$src/references/reporting-standard.md"
   curl -fsSL "$base/agents/openai.yaml" -o "$src/agents/openai.yaml"
 }
 
@@ -265,7 +275,7 @@ main() {
   cp "$src/codex-test" "$wrapper"
   chmod +x "$wrapper"
   install_shell_integration "$wrapper"
-  primary_profile="$(shell_profiles | head -1)"
+  primary_profile="$(first_shell_profile)"
 
   log ""
   log "codex-test installed."

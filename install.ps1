@@ -53,6 +53,7 @@ function Download-Repo($Destination) {
   Invoke-WebRequest "$base/scripts/analyze.sh" -OutFile "$Destination\scripts\analyze.sh"
   Invoke-WebRequest "$base/scripts/report.sh" -OutFile "$Destination\scripts\report.sh"
   Invoke-WebRequest "$base/references/quality-rubric.md" -OutFile "$Destination\references\quality-rubric.md"
+  Invoke-WebRequest "$base/references/reporting-standard.md" -OutFile "$Destination\references\reporting-standard.md"
   Invoke-WebRequest "$base/agents/openai.yaml" -OutFile "$Destination\agents\openai.yaml"
 }
 

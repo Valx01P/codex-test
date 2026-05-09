@@ -52,6 +52,24 @@ script_command() {
   esac
 }
 
+has_text_in_files() {
+  local pattern="$1"
+  shift
+
+  local file
+  for file in "$@"; do
+    [[ -f "$file" ]] || continue
+    grep -Eqi "$pattern" "$file" && return 0
+  done
+  return 1
+}
+
+add_workspace_hint() {
+  local hint="$1"
+  WORKSPACE_HINTS="${WORKSPACE_HINTS}${hint}"$'\n'
+  MONOREPO="yes"
+}
+
 find_code_files() {
   find . \
     \( -path './.git' \
@@ -78,12 +96,25 @@ TEST_COMMAND="unknown"
 UNIT_TEST_COMMAND="unknown"
 UI_TEST_COMMAND="unknown"
 E2E_TEST_COMMAND="unknown"
+COVERAGE_COMMAND="unknown"
+LINT_COMMAND="unknown"
+TYPECHECK_COMMAND="unknown"
+BUILD_COMMAND="unknown"
+MONOREPO="no"
+WORKSPACE_HINTS=""
 
 NEXTJS="no"
 REACT="no"
 TESTING_LIBRARY="no"
 PLAYWRIGHT="no"
 CYPRESS="no"
+
+[[ -f pnpm-workspace.yaml ]] && add_workspace_hint "pnpm-workspace.yaml"
+[[ -f turbo.json ]] && add_workspace_hint "turbo.json"
+[[ -f nx.json ]] && add_workspace_hint "nx.json"
+[[ -f lerna.json ]] && add_workspace_hint "lerna.json"
+[[ -f rush.json ]] && add_workspace_hint "rush.json"
+[[ -f package.json ]] && grep -Eqi '"workspaces"[[:space:]]*:' package.json && add_workspace_hint "package.json workspaces"
 
 if [[ -f package.json ]]; then
   LANGUAGE="javascript/typescript"
@@ -136,18 +167,46 @@ if [[ -f package.json ]]; then
   elif [[ "$CYPRESS" == "yes" ]]; then
     E2E_TEST_COMMAND="npx cypress run"
   fi
+
+  if script_command test:coverage "$PM" >/dev/null 2>&1; then
+    COVERAGE_COMMAND="$(script_command test:coverage "$PM")"
+  elif script_command coverage "$PM" >/dev/null 2>&1; then
+    COVERAGE_COMMAND="$(script_command coverage "$PM")"
+  elif [[ "$TEST_RUNNER" == "vitest" ]]; then
+    COVERAGE_COMMAND="npx vitest run --coverage"
+  elif [[ "$TEST_RUNNER" == "jest" ]]; then
+    COVERAGE_COMMAND="npx jest --coverage"
+  elif [[ "$TEST_RUNNER" == "mocha" ]] && has_package_text '"(nyc|c8)"[[:space:]]*:'; then
+    COVERAGE_COMMAND="npx nyc npx mocha"
+  fi
+
+  if script_command lint "$PM" >/dev/null 2>&1; then
+    LINT_COMMAND="$(script_command lint "$PM")"
+  fi
+  if script_command typecheck "$PM" >/dev/null 2>&1; then
+    TYPECHECK_COMMAND="$(script_command typecheck "$PM")"
+  elif script_command type-check "$PM" >/dev/null 2>&1; then
+    TYPECHECK_COMMAND="$(script_command type-check "$PM")"
+  fi
+  if script_command build "$PM" >/dev/null 2>&1; then
+    BUILD_COMMAND="$(script_command build "$PM")"
+  fi
 elif [[ -f pyproject.toml || -f setup.py || -f setup.cfg || -f pytest.ini ]]; then
   LANGUAGE="python"
   PROJECT_TYPE="python"
   FRAMEWORK="pytest"
   TEST_RUNNER="pytest"
   TEST_COMMAND="python -m pytest"
+  if has_text_in_files 'pytest-cov|--cov' pyproject.toml setup.cfg pytest.ini tox.ini requirements.txt requirements-dev.txt; then
+    COVERAGE_COMMAND="python -m pytest --cov"
+  fi
 elif [[ -f go.mod ]]; then
   LANGUAGE="go"
   PROJECT_TYPE="go"
   FRAMEWORK="go"
   TEST_RUNNER="go test"
   TEST_COMMAND="go test ./..."
+  COVERAGE_COMMAND="go test ./... -cover"
 elif [[ -f Cargo.toml ]]; then
   LANGUAGE="rust"
   PROJECT_TYPE="rust"
@@ -170,6 +229,7 @@ elif [[ -f phpunit.xml || -f phpunit.xml.dist ]]; then
   FRAMEWORK="phpunit"
   TEST_RUNNER="phpunit"
   TEST_COMMAND="./vendor/bin/phpunit"
+  COVERAGE_COMMAND="./vendor/bin/phpunit --coverage-text"
 fi
 
 case "$LANGUAGE" in
@@ -251,6 +311,17 @@ else
 fi
 
 HIGH_VALUE="$(printf '%s\n' "$UNTESTED_LIST" | grep -Ei '(/app/|/pages/|/api/|/routes?/|/server/|/services?/|/lib/|/utils?/|/hooks?/|/components?/|auth|session|permission|payment|checkout|billing|validation|schema|parser|serializer|form|route|action|loader|mutation)' | head -40 || true)"
+LOW_COMPLEXITY=""
+while IFS= read -r src; do
+  [[ -z "$src" ]] && continue
+  [[ -f "$src" ]] || continue
+
+  line_count="$(wc -l < "$src" | tr -d '[:space:]')"
+  if (( line_count <= 120 )); then
+    LOW_COMPLEXITY="${LOW_COMPLEXITY}${src} (${line_count} lines)"$'\n'
+  fi
+done <<< "$UNTESTED_LIST"
+LOW_COMPLEXITY="$(printf '%s\n' "$LOW_COMPLEXITY" | head -40)"
 
 printf '=== CODEX TEST ANALYSIS ===\n'
 printf 'ROOT: %s\n' "$(pwd)"
@@ -263,6 +334,19 @@ printf 'TEST_COMMAND: %s\n' "$TEST_COMMAND"
 printf 'UNIT_TEST_COMMAND: %s\n' "$UNIT_TEST_COMMAND"
 printf 'UI_TEST_COMMAND: %s\n' "$UI_TEST_COMMAND"
 printf 'E2E_TEST_COMMAND: %s\n' "$E2E_TEST_COMMAND"
+printf 'COVERAGE_COMMAND: %s\n' "$COVERAGE_COMMAND"
+printf 'LINT_COMMAND: %s\n' "$LINT_COMMAND"
+printf 'TYPECHECK_COMMAND: %s\n' "$TYPECHECK_COMMAND"
+printf 'BUILD_COMMAND: %s\n' "$BUILD_COMMAND"
+printf 'MONOREPO: %s\n' "$MONOREPO"
+printf '\n'
+
+printf '=== WORKSPACE SIGNALS ===\n'
+if [[ -n "$WORKSPACE_HINTS" ]]; then
+  printf '%s\n' "$WORKSPACE_HINTS" | sed '/^$/d'
+else
+  printf '(none detected)\n'
+fi
 printf '\n'
 
 printf '=== FRONTEND SIGNALS ===\n'
@@ -286,6 +370,14 @@ if [[ -n "$HIGH_VALUE" ]]; then
   printf '%s\n' "$HIGH_VALUE"
 else
   printf '(none detected by path heuristic)\n'
+fi
+printf '\n'
+
+printf '=== LOW COMPLEXITY COVERAGE CANDIDATES ===\n'
+if [[ -n "$LOW_COMPLEXITY" ]]; then
+  printf '%s\n' "$LOW_COMPLEXITY"
+else
+  printf '(none detected by line-count heuristic)\n'
 fi
 printf '\n'
 

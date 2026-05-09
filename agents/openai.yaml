@@ -1,8 +1,8 @@
 interface:
   display_name: "Codex Test"
-  short_description: "Plan, generate, validate, and explain tests"
+  short_description: "Choose, improve, validate, and explain tests"
   brand_color: "#2563EB"
-  default_prompt: "Use $codex-test to inspect this repo, propose high-impact tests, generate the approved tests, validate them, and write CODEX-TEST-REPORT.md."
+  default_prompt: "Use $codex-test to choose a production-ready testing workflow, improve this repo's tests, validate the changes, and write CODEX-TEST-REPORT.md."
 
 policy:
   allow_implicit_invocation: true

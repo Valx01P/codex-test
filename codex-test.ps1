@@ -3,7 +3,7 @@ param(
   [string[]] $RemainingArgs
 )
 
-$Version = "0.2.0"
+$Version = "0.3.0"
 $SkillName = "codex-test"
 $ReportFile = "CODEX-TEST-REPORT.md"
 if ($env:CODEX_TEST_SKILL_DIR) {
@@ -19,8 +19,8 @@ if ($env:CODEX_TEST_BIN_DIR) {
 $ShellMarkerStart = "# >>> codex-test shell integration >>>"
 $ShellMarkerEnd = "# <<< codex-test shell integration <<<"
 
-$DefaultPrompt = 'Use $codex-test. Inspect this repository for test gaps, propose a prioritized plan, generate the approved high-impact tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file.'
-$ExecPrompt = 'Use $codex-test in non-interactive mode. Inspect this repository for test gaps, choose up to 5 high-impact targets, generate focused tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file. Do not install dependencies or edit product source unless they are already part of the repository setup.'
+$DefaultPrompt = 'Use $codex-test. Before running commands or editing files, offer the user three testing workflow options: Recommended Test Scan, Increase Test Coverage, and Specialized Test Development. If the user already provided a goal or mode, infer the mode and proceed. Then analyze the repository, propose a prioritized production-ready plan, generate approved tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps.'
+$ExecPrompt = 'Use $codex-test in non-interactive mode. Select the workflow from the explicit mode or goal; otherwise use Recommended Test Scan. For Increase Test Coverage, target 80% unless another threshold is provided and cover lower-complexity meaningful gaps before more complex gaps. Generate focused production-ready tests, validate them, and write CODEX-TEST-REPORT.md with a high-level overview, detailed per-file descriptions, changes, impact, CI/runtime and flake-risk notes, and continuous-improvement next steps. Do not install dependencies or edit product source unless they are already part of the repository setup.'
 
 function Show-Usage {
   @"
@@ -32,6 +32,10 @@ Usage:
   codex-test.ps1 --exec --go-ham    Run with approval policy "never"
   codex-test.ps1 --plan-only        Inspect the repo and stop after the plan
   codex-test.ps1 --goal "..."       Add a testing goal or area to focus on
+  codex-test.ps1 --mode "..."       Preselect recommended, coverage, or specialized
+  codex-test.ps1 --coverage-target N
+                                    Set a coverage target for coverage mode
+  codex-test.ps1 --test-kind "..."  Focus specialized tests, e.g. e2e or regression
   codex-test.ps1 --install          Install the skill, wrapper, and "codex test"
   codex-test.ps1 --install-repo     Install into .agents\skills\codex-test
   codex-test.ps1 --uninstall        Remove the user skill
@@ -82,6 +86,38 @@ function Copy-Skill($Source, $Destination) {
       Copy-Item $srcDir $destDir -Recurse -Force
     }
   }
+}
+
+function Normalize-TestMode($Value) {
+  $normalized = $Value.ToLowerInvariant().Replace("_", "-")
+  switch ($normalized) {
+    { $_ -in @("1", "recommended", "recommend", "scan", "recommended-scan", "recommended-test-scan") } {
+      return "recommended"
+    }
+    { $_ -in @("2", "coverage", "cover", "increase-coverage", "test-coverage", "coverage-growth") } {
+      return "coverage"
+    }
+    { $_ -in @("3", "specialized", "specialised", "suite", "custom", "test-suite", "test-development") } {
+      return "specialized"
+    }
+    default {
+      throw "invalid --mode `"$Value`". Use recommended, coverage, or specialized."
+    }
+  }
+}
+
+function Normalize-CoverageTarget($Value) {
+  $normalized = ($Value -replace "[\s%]", "")
+  if ($normalized -notmatch "^[0-9]+(\.[0-9]+)?$") {
+    throw "invalid --coverage-target `"$Value`". Use a number from 1 to 100, such as 80 or 85%."
+  }
+
+  $number = [double]$normalized
+  if ($number -le 0 -or $number -gt 100) {
+    throw "invalid --coverage-target `"$Value`". Use a number from 1 to 100, such as 80 or 85%."
+  }
+
+  return $normalized
 }
 
 function Remove-ShellBlock($ProfilePath) {
@@ -295,6 +331,9 @@ $JsonArg = @()
 $GoHam = $false
 $PlanOnly = $false
 $Goal = ""
+$TestMode = ""
+$CoverageTarget = ""
+$TestKind = ""
 $ExtraArgs = @()
 
 for ($i = 0; $i -lt $RemainingArgs.Count; $i++) {
@@ -311,6 +350,53 @@ for ($i = 0; $i -lt $RemainingArgs.Count; $i++) {
       }
       $i++
       $Goal = $RemainingArgs[$i]
+      continue
+    }
+    { $_ -in @("--mode", "--workflow") } {
+      if ($i + 1 -ge $RemainingArgs.Count) {
+        Write-Error "$arg requires a value"
+        exit 2
+      }
+      $i++
+      try {
+        $TestMode = Normalize-TestMode $RemainingArgs[$i]
+      } catch {
+        Write-Error $_
+        exit 2
+      }
+      continue
+    }
+    { $_ -in @("--coverage-target", "--target-coverage") } {
+      if ($i + 1 -ge $RemainingArgs.Count) {
+        Write-Error "$arg requires a value"
+        exit 2
+      }
+      $i++
+      if ($TestMode -and $TestMode -ne "coverage") {
+        Write-Error "--coverage-target requires --mode coverage"
+        exit 2
+      }
+      try {
+        $CoverageTarget = Normalize-CoverageTarget $RemainingArgs[$i]
+      } catch {
+        Write-Error $_
+        exit 2
+      }
+      $TestMode = "coverage"
+      continue
+    }
+    { $_ -in @("--test-kind", "--kind", "--suite") } {
+      if ($i + 1 -ge $RemainingArgs.Count) {
+        Write-Error "$arg requires a value"
+        exit 2
+      }
+      $i++
+      if ($TestMode -and $TestMode -ne "specialized") {
+        Write-Error "--test-kind requires --mode specialized"
+        exit 2
+      }
+      $TestKind = $RemainingArgs[$i]
+      $TestMode = "specialized"
       continue
     }
     "--install" { Install-UserSkill; exit 0 }
@@ -340,6 +426,15 @@ if ($PlanOnly) {
 
 if ($Goal) {
   $Prompt = "$Prompt User testing goal: $Goal"
+}
+if ($TestMode) {
+  $Prompt = "$Prompt Requested testing workflow mode: $TestMode."
+}
+if ($CoverageTarget) {
+  $Prompt = "$Prompt Requested coverage target: $CoverageTarget%."
+}
+if ($TestKind) {
+  $Prompt = "$Prompt Requested specialized test kind: $TestKind."
 }
 
 $CodexArgs = @()

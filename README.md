@@ -59,7 +59,7 @@ codex test --version
 Expected output:
 
 ```text
-codex-test v0.2.0
+codex-test v0.3.0
 ```
 
 If anything seems off, run:
@@ -76,10 +76,35 @@ From the project you want to test:
 codex test
 ```
 
+Codex will offer three options before it starts:
+
+1. **Recommended Test Scan**: inspect the repo, find the best high-impact test
+   targets, propose a plan, then generate and validate the approved tests.
+2. **Increase Test Coverage**: measure or estimate coverage, target 80% by
+   default unless you request another threshold, and add meaningful tests from
+   simpler uncovered code toward more complex areas.
+3. **Specialized Test Development**: build production-ready tests for a specific
+   suite or risk area, such as e2e, regression, feature, API, accessibility,
+   backend, or Next.js/frontend workflows.
+
 To focus on one area:
 
 ```bash
 codex test --goal "focus on checkout form validation"
+```
+
+To preselect coverage mode:
+
+```bash
+codex test --mode coverage --coverage-target 85
+```
+
+`--coverage-target` also accepts a percent sign, for example `85%`.
+
+To preselect a specialized test suite:
+
+```bash
+codex test --mode specialized --test-kind e2e --goal "checkout smoke flow"
 ```
 
 To let it run without stopping for small approvals:
@@ -101,10 +126,24 @@ $codex-test
 
 - New or updated test files.
 - A `CODEX-TEST-REPORT.md` report.
-- A summary of what was tested, why it was chosen, what passed, what failed, and
-  what still needs review.
+- A high-level overview table, per-file explanations, change and impact notes,
+  validation results, coverage details when applicable, remaining gaps, and a
+  continuous-improvement plan for the next testing work.
 
 The report is there so you do not have to blindly trust generated tests.
+
+## Production App Behavior
+
+For larger production repos, `codex-test` is designed to:
+
+- reuse the repo's existing test runners, fixtures, mocks, page objects, and CI
+  scripts instead of inventing a new testing style
+- detect coverage, lint, typecheck, build, and monorepo/workspace signals when
+  possible
+- keep dependency installs, CI changes, coverage threshold changes, and product
+  source edits behind explicit approval
+- call out runtime cost, flake risk, skipped targets, environment assumptions,
+  and remaining review steps in `CODEX-TEST-REPORT.md`
 
 ## Team Setup
 
