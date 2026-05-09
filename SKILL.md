@@ -1,235 +1,235 @@
 ---
-name: test-coverage
+name: codex-test
 description: >
-  Analyze a codebase for test gaps, generate meaningful tests with full
-  explanations, validate them, and produce a structured report. Use when
-  the user asks to improve test coverage, generate tests, audit untested
-  code, or invokes "$test-coverage". Triggers on: "generate tests",
-  "improve coverage", "find untested code", "test audit", "add tests".
+  Agentic test discovery, planning, generation, validation, and reporting for
+  Codex. Use when a user asks to audit tests, improve coverage, generate unit,
+  integration, UI, e2e, regression, or domain tests, harden a Next.js/frontend
+  repo, find high-impact test targets, or invokes "$codex-test" or "codex-test".
 ---
 
-# Test Coverage Workflow
+# Codex Test
 
-You are a senior test engineer running a structured, multi-phase test
-coverage workflow. Follow every phase in order. Do not skip phases.
-After each phase, print a brief status line before continuing.
+Run a rigorous test-improvement workflow that keeps the human in the loop
+without making them re-explain the process.
 
----
+## Core Behavior
 
-## Phase 1 — Analyze the Repository
+1. Inspect the repository before recommending tests.
+2. Present a short testing brief and proposed plan before writing tests when the
+   user is available.
+3. Prefer high-signal tests over broad, shallow coverage.
+4. Generate tests in small batches, validate them, and fix straightforward
+   failures once.
+5. Write `CODEX-TEST-REPORT.md` as a reviewable draft explaining every created
+   or updated file, why it exists, what each test covers, validation results,
+   remaining gaps, and follow-up recommendations.
 
-Run the analysis script to scan the repo:
+If the user started Codex non-interactively and cannot approve a plan, proceed
+with a conservative default plan: up to 5 high-impact targets, no dependency
+installation unless already available, and no product source edits.
+
+## Phase 0: Align Scope
+
+Start by saying what will happen:
+
+```text
+I will inspect the repo, identify the best test targets, propose a prioritized
+plan, then generate and validate the agreed tests with a report explaining every
+file changed.
+```
+
+Ask for specificity only if the user did not provide it and the session is
+interactive:
+
+- "Do you want a broad coverage pass, or should I focus on a workflow, bug,
+  component, route, or domain area?"
+- "Should I stop after the plan, or proceed after the plan with the highest
+  impact tests?"
+
+Offer autonomy without hiding the risk:
+
+```text
+For fewer approval prompts in a trusted repo, run:
+codex-test --exec --go-ham
+
+This keeps Codex in workspace-write sandboxing but uses approval policy
+"never", so it can edit tests and run local commands without repeated prompts.
+Network installs, destructive actions, and writes outside the repo are still
+not part of this workflow unless the user explicitly asks.
+```
+
+## Phase 1: Repository Analysis
+
+Prefer the bundled analyzer when available:
 
 ```bash
-bash .agents/skills/test-coverage/scripts/analyze.sh
+bash .agents/skills/codex-test/scripts/analyze.sh .
 ```
 
-Read the output. It gives you:
-- Detected language and test framework
-- List of source files with and without tests
-- Existing test file samples (for convention matching)
-- The test runner command
+If the skill is installed for the user rather than checked into the repo, locate
+the skill folder from the path shown in the available skills list, then run:
 
-If the script is not available (e.g. user installed the skill globally),
-do this analysis manually:
-1. Identify the language by checking file extensions and config files
-   (package.json, pyproject.toml, go.mod, Cargo.toml, etc.)
-2. Identify the test framework from config (jest.config.*, pytest.ini,
-   vitest.config.*, etc.)
-3. Find all source files and test files
-4. Determine which source files have corresponding tests and which don't
-5. Read 2-3 existing test files to learn the project's test conventions
-
-Print a status summary:
-```
-📊 Analysis Complete
-   Language:   [detected]
-   Framework:  [detected]
-   Sources:    [N] files
-   Tested:     [N] files
-   Untested:   [N] files
-   Coverage:   ~[N]%
+```bash
+bash /path/to/codex-test/scripts/analyze.sh .
 ```
 
----
+If the script is unavailable, manually inspect:
 
-## Phase 2 — Build the Test Plan
+- package or language files: `package.json`, `pnpm-lock.yaml`, `pyproject.toml`,
+  `go.mod`, `Cargo.toml`, `pom.xml`, `pytest.ini`, `vitest.config.*`,
+  `jest.config.*`, `playwright.config.*`, `cypress.config.*`
+- source layout: `app`, `pages`, `src`, `components`, `lib`, `utils`, `hooks`,
+  `server`, `api`, `tests`, `__tests__`, `e2e`
+- existing test conventions: imports, runner, assertion style, mocks, file
+  placement, setup files, factories, fixtures, and helpers
 
-For each untested file (up to 20), read its source code and evaluate:
+Read `references/quality-rubric.md` before generating tests.
 
-1. **Priority** — Is this critical (auth, payments, validation, data),
-   high (shared utilities, API handlers), medium (feature modules), or
-   low (config, wrappers, constants)?
-2. **What to test** — Identify the key exported functions/classes and
-   their main behaviors, edge cases, and error paths.
-3. **Mocking needs** — What external dependencies need mocking?
-   (databases, APIs, file system, timers)
-4. **Risk if untested** — What could break in production?
+## Phase 2: Prioritize Targets
 
-Skip files that are pure config, type definitions, barrel exports
-(index files that only re-export), or have no meaningful logic.
+Build a ranked plan using this order:
 
-Print the plan as a numbered list:
-```
-📋 Test Plan (N files)
+1. Critical domain behavior: auth, permissions, payments, data validation,
+   persistence, API contracts, business rules, parsing, security boundaries.
+2. Shared code with many callers: utilities, hooks, services, adapters, state
+   machines, form validators, formatters, serializers.
+3. Frontend behavior users rely on: forms, loading/error/empty states,
+   navigation, filtering, optimistic updates, accessibility-critical controls.
+4. Regression risk: complex conditionals, recent changes, bug-prone files,
+   high-churn modules, brittle integration points.
+5. Coverage gaps that are cheap and meaningful.
 
-1. [CRITICAL] src/auth/validate.ts
-   → Unit tests for token validation, expiry checks, role verification
-   → Mocks: jwt library, user database
-   → Risk: Invalid tokens could bypass auth
+Skip or defer:
 
-2. [HIGH] src/utils/parser.ts
-   → Unit tests for JSON parsing, XSS sanitization, null handling
-   → Mocks: none
-   → Risk: Malformed input reaches database layer
+- pure config, constants, generated files, type-only files, barrel exports,
+  stories, snapshots, and wrappers with no behavior
+- tests that only assert existence or implementation details
+- broad e2e infrastructure when unit/component tests would catch the risk faster
 
-...
-```
-
----
-
-## Phase 3 — Generate Tests (one file at a time)
-
-For each file in the plan, generate a complete test file. For EVERY test
-file you generate, you MUST also produce the structured explanation
-block described below.
-
-### 3a. Write the test code
-
-- **Match conventions exactly**: use the same imports, describe/it
-  nesting, assertion library, and naming patterns as existing tests
-- **Test real behaviors**: assert on return values, side effects, thrown
-  errors — never just `expect(fn).toBeDefined()`
-- **Cover edge cases**: null/undefined inputs, empty arrays, boundary
-  values, concurrent operations
-- **Mock properly**: mock only external deps, never the module under test
-- **Independent tests**: each test runs alone, use beforeEach for setup
-- **Readable names**: "should return 404 when user does not exist"
-
-### 3b. Write the explanation block
-
-After writing each test file, produce this explanation as a markdown
-section in the report (NOT in the test file itself):
+For each proposed target include:
 
 ```markdown
-### `src/auth/__tests__/validate.test.ts`
-
-**Source:** `src/auth/validate.ts`
-**Priority:** Critical · **Type:** Unit · **Domain:** Authentication
-
-#### Why This File Needs Tests
-[One paragraph: why is this file important? What role does it play in
-the system? What's at risk without tests?]
-
-#### Generated Tests
-
-| Test Name | What It Tests | Why It Matters | Category | Edge Cases |
-|-----------|--------------|----------------|----------|------------|
-| should reject expired tokens | validateToken with an expired JWT | Expired tokens must never grant access | unit | just-expired, far-future, epoch-zero |
-| should throw on malformed input | validateToken with non-string input | Prevents crash from unexpected types | unit | null, undefined, number, object |
-| ... | ... | ... | ... | ... |
-
-#### Reasoning
-[Why you chose these specific tests. What testing strategy are you
-following? What tradeoffs did you make?]
-
-#### Gaps
-[What still needs manual testing or integration tests after this suite?]
+1. [priority] `path/to/source`
+   Type: unit | component | integration | e2e | domain
+   Why: risk and role in the app
+   Tests: concrete behaviors and edge cases
+   Mocks/fixtures: required dependencies
+   Expected files: paths to create or update
 ```
 
-### 3c. Write the file to disk
+In an interactive session, wait for user confirmation or edits to the plan
+before writing tests. If the user already asked you to proceed autonomously, make
+the plan visible and continue.
 
-Write each generated test file to the correct path (matching the
-project's conventions for test file location).
+## Next.js and Modern Frontend Defaults
 
----
+For Next.js, React, or similar frontend repos:
 
-## Phase 4 — Validate
+- Prefer existing test tools. Use Vitest/Jest and Testing Library if present.
+- Add component tests for UI state and user behavior, not snapshots as the main
+  assertion.
+- Add route handler, server action, loader, or API tests when business logic
+  sits at the boundary.
+- Add Playwright/Cypress tests only when an e2e tool already exists or the plan
+  explicitly justifies adding one.
+- Do not install test infrastructure by default. If the repo has no test setup,
+  propose the smallest viable setup and wait for approval unless running
+  non-interactively.
+- For app-router code, test pure logic directly and route handlers through
+  request/response behavior where practical.
+- For forms and interactive components, cover submit success, validation
+  failure, disabled/loading states, and the most important accessibility labels.
 
-Run each generated test file individually using the detected test runner:
+## Phase 3: Generate Tests
 
-- Jest: `npx jest --no-coverage "path/to/test"`
-- Vitest: `npx vitest run "path/to/test"`
-- Pytest: `python -m pytest "path/to/test" -x --tb=short`
-- Go: `go test -v -run . "./package/"`
-- Cargo: `cargo test`
+Work one target at a time:
 
-Record pass/fail for each file. If a test fails:
-1. Read the error output
-2. Attempt ONE fix (common issues: incorrect imports, wrong mock setup,
-   async handling, missing dependencies)
-3. Re-run the test
-4. If it still fails, mark it as failing and include the error in the report
+1. Read the source and adjacent modules.
+2. Read relevant existing tests and setup files.
+3. Create or update the test file in the project's existing location pattern.
+4. Mock only external boundaries: network, database, filesystem, time, browser
+   APIs, auth/session providers, feature flags.
+5. Keep tests independent and deterministic.
+6. Use realistic fixtures and user-visible assertions.
 
-Print status after each file:
-```
-✅ src/auth/__tests__/validate.test.ts — PASS (5 tests)
-❌ src/utils/__tests__/parser.test.ts — FAIL (see report)
-✅ src/api/__tests__/routes.test.ts — PASS (8 tests)
-```
+Do not modify product source to make tests pass. If a real bug appears, document
+it in the report and ask before changing implementation.
 
----
+If an existing test file exists, append focused tests instead of replacing it.
+If the file is empty or trivial, preserve any useful setup and improve it.
 
-## Phase 5 — Generate the Report
+## Phase 4: Validate
 
-Create a file called `TEST-COVERAGE-REPORT.md` in the repo root
-containing:
+Run the narrowest useful command first:
 
-1. **Header** with timestamp, repo path, language, framework, model used
-2. **Summary table**: files analyzed, tests generated, pass/fail counts,
-   estimated coverage before and after
-3. **Per-file sections** with the explanation blocks from Phase 3
-   (including the test table, reasoning, and gaps)
-4. **Failing tests section** with error output and suggested fixes
-5. **Uncovered files** that weren't included in this run and why
+- Vitest: `npx vitest run path/to/test`
+- Jest: `npx jest path/to/test`
+- Testing Library through project script: package manager test script plus a
+  path filter when supported
+- Playwright: `npx playwright test path/to/spec`
+- Pytest: `python -m pytest path/to/test -x --tb=short`
+- Go: `go test ./package`
+- Rust: `cargo test`
 
-Run:
+If a generated test fails:
+
+1. Read the failure.
+2. Fix one clear issue in the test or setup.
+3. Re-run the same command.
+4. If it still fails, stop fixing that file and record the failure, likely
+   cause, and suggested next step in the report.
+
+Run broader test or typecheck commands only when they are already available and
+reasonably scoped, or when the user requested a full validation pass.
+
+## Phase 5: Write the Draft Report
+
+Create or update `CODEX-TEST-REPORT.md` in the repo root. The report is the
+human review artifact, not just a log. Include:
+
+- timestamp, repo path, detected stack, test runner, and command(s) run
+- testing goal and plan summary
+- generated/updated file table
+- per-file explanation:
+  - source file
+  - test file
+  - priority and test type
+  - why this target was chosen
+  - table of test names, behavior covered, why it matters, category, edge cases
+  - mocking/fixture strategy
+  - validation command and result
+  - gaps and recommended follow-ups
+- skipped targets and why
+- failing tests or blocked validation with exact command and concise error
+- user review checklist: `git diff`, generated tests, report, and test commands
+
+After writing the report, run the bundled report finalizer if available:
+
 ```bash
-bash .agents/skills/test-coverage/scripts/report.sh
+bash .agents/skills/codex-test/scripts/report.sh .
 ```
 
-If the script isn't available, write the report directly.
+## Phase 6: Final Response
 
----
+Keep the final response short and concrete:
 
-## Phase 6 — Present for Approval
-
-After the report is written, tell the user:
-
-```
-📄 Report: TEST-COVERAGE-REPORT.md
-
-Summary:
-  Generated:  [N] test files
-  Passing:    [N]
-  Failing:    [N]
-  Coverage:   ~[before]% → ~[after]%
-
-All generated test files are written to disk. You can:
-  • Review the report for detailed explanations of each test
-  • Run `git diff` to see all changes
-  • Run `git checkout -- .` to undo everything
-  • Run your test suite to verify: [test runner command]
-  • Commit the changes you want to keep
-
-Would you like me to walk through any specific file, explain a test
-in more detail, or adjust any of the generated tests?
+```text
+Generated/updated N test files and CODEX-TEST-REPORT.md.
+Validation: N passing, N failing, N not run.
+Key targets: ...
+Review: CODEX-TEST-REPORT.md and git diff.
 ```
 
-Because Codex already shows you every file it writes and lets you
-approve or roll back via git, the approval flow is native — no custom
-TUI needed.
+Mention any commands that could not be run and why.
 
----
+## Hard Rules
 
-## Important Rules
-
-- NEVER modify source files. Only create or update test files.
-- NEVER delete existing tests. Only add new ones.
-- If a test file already exists, ADD new tests to it rather than
-  overwriting (unless it's empty or trivial).
-- Always match the project's existing test conventions exactly.
-- Write the explanation for EVERY test, not just a subset.
-- If the repo has no existing tests at all, choose sensible defaults
-  based on the language (Jest for JS/TS, pytest for Python, etc.)
-  and create the test infrastructure (config files, test directories).
+- Do not delete existing tests.
+- Do not overwrite unrelated user changes.
+- Do not edit product source unless the user explicitly expands the task from
+  test generation into bug fixing.
+- Do not add network-installed dependencies without approval.
+- Do not use snapshots as a substitute for behavioral assertions.
+- Do not report success unless generated tests were run, or clearly state that
+  validation was not possible.
+- Keep the report honest: include tradeoffs, uncovered areas, and residual risk.

@@ -1,140 +1,281 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────
-# codex-test — shortcut for running the $test-coverage skill
-#
-# Usage:
-#   codex-test                   # interactive (opens Codex TUI)
-#   codex-test --exec            # non-interactive (codex exec)
-#   codex-test --exec --json     # JSON output for piping
-#   codex-test --help
-#
-# This is a thin wrapper. All the real logic is in the skill.
-# ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.2.0"
+SKILL_NAME="codex-test"
+USER_SKILL_DIR="${CODEX_TEST_SKILL_DIR:-$HOME/.agents/skills/$SKILL_NAME}"
+REPORT_FILE="CODEX-TEST-REPORT.md"
 
-PROMPT='$test-coverage Analyze this repository for test coverage gaps. Generate tests for all untested files, validate them, and produce the TEST-COVERAGE-REPORT.md.'
+DEFAULT_PROMPT='Use $codex-test. Inspect this repository for test gaps, propose a prioritized plan, generate the approved high-impact tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file.'
+EXEC_PROMPT='Use $codex-test in non-interactive mode. Inspect this repository for test gaps, choose up to 5 high-impact targets, generate focused tests, validate them, and write CODEX-TEST-REPORT.md explaining every created or updated file. Do not install dependencies or edit product source unless they are already part of the repository setup.'
 
 usage() {
   cat <<EOF
-codex-test v${VERSION} — AI-powered test coverage generator
+codex-test v${VERSION}
+
+Agentic test planning, generation, validation, and reporting for Codex.
 
 Usage:
-  codex-test                Run interactively in Codex TUI
-  codex-test --exec         Run non-interactively (codex exec)
-  codex-test --exec --json  Non-interactive with JSON output
-  codex-test --install      Install the skill to your global skills dir
-  codex-test --help         Show this help
+  codex-test                     Open Codex with the codex-test workflow
+  codex-test --exec              Run non-interactively with a bounded default plan
+  codex-test --exec --go-ham     Run headless with approval policy "never"
+  codex-test --plan-only         Inspect the repo and stop after the proposed plan
+  codex-test --goal "..."        Add a testing goal, bug, workflow, or area to focus on
+  codex-test --install           Install this skill for the current user
+  codex-test --install-repo      Install this skill into .agents/skills/codex-test
+  codex-test --uninstall         Remove the user skill and this wrapper if possible
+  codex-test --print-codex-function
+                                 Print an optional shell function for "codex test"
+  codex-test --help              Show this help
 
-Prerequisites:
-  • Codex CLI installed (npm i -g @openai/codex or brew install --cask codex)
-  • Authenticated (codex auth or CODEX_API_KEY set)
-  • Skill installed (run: codex-test --install)
+Examples:
+  codex-test
+  codex-test --goal "focus on checkout form validation"
+  codex-test --exec --go-ham --goal "modern Next.js frontend coverage"
+  codex-test --install-repo
 
 What it does:
-  1. Scans your repo for untested source files
-  2. Builds a prioritized test plan
-  3. Generates test files matching your project's conventions
-  4. Runs each generated test to verify it passes
-  5. Produces TEST-COVERAGE-REPORT.md with full explanations
-  6. Lets you review via Codex's native approval flow or git diff
+  1. Scans the repo and existing tests
+  2. Recommends high-impact unit, component, integration, UI, e2e, or domain tests
+  3. Lets an interactive user adjust the plan before edits
+  4. Generates tests that match local conventions
+  5. Runs narrow validation commands
+  6. Writes ${REPORT_FILE} as a human-reviewable draft
+
+Approval modes:
+  Default interactive runs use Codex's normal approval flow.
+  --exec uses workspace-write sandboxing so tests and the report can be written.
+  --go-ham passes --ask-for-approval never while keeping workspace-write
+  sandboxing. Use it only in a trusted repository.
+
+Codex CLI:
+  This repository cannot register a native "codex test" subcommand in Codex.
+  To get that spelling in your shell, run:
+    codex-test --print-codex-function
 
 EOF
 }
 
-install_skill() {
-  # Determine the skill source directory (where this script lives)
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  SKILL_SRC="$SCRIPT_DIR"
+err() {
+  printf 'codex-test: %s\n' "$*" >&2
+}
 
-  # If the SKILL.md isn't alongside this script, check parent
-  if [[ ! -f "$SKILL_SRC/SKILL.md" ]]; then
-    SKILL_SRC="$(dirname "$SCRIPT_DIR")"
+find_source_dir() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  if [[ -f "$script_dir/SKILL.md" ]]; then
+    printf '%s\n' "$script_dir"
+    return 0
   fi
 
-  if [[ ! -f "$SKILL_SRC/SKILL.md" ]]; then
-    echo "❌ Cannot find SKILL.md. Run this from the codex-test directory."
+  if [[ -f "$(dirname "$script_dir")/SKILL.md" ]]; then
+    dirname "$script_dir"
+    return 0
+  fi
+
+  if [[ -f "$USER_SKILL_DIR/SKILL.md" ]]; then
+    printf '%s\n' "$USER_SKILL_DIR"
+    return 0
+  fi
+
+  return 1
+}
+
+copy_skill() {
+  local src="$1"
+  local dest="$2"
+
+  if [[ ! -f "$src/SKILL.md" ]]; then
+    err "cannot find SKILL.md in $src"
+    return 1
+  fi
+
+  mkdir -p "$dest"
+  cp "$src/SKILL.md" "$dest/"
+
+  if [[ -d "$src/scripts" ]]; then
+    rm -rf "$dest/scripts"
+    cp -R "$src/scripts" "$dest/scripts"
+    chmod +x "$dest/scripts/"*.sh 2>/dev/null || true
+  fi
+
+  if [[ -d "$src/references" ]]; then
+    rm -rf "$dest/references"
+    cp -R "$src/references" "$dest/references"
+  fi
+
+  if [[ -d "$src/agents" ]]; then
+    rm -rf "$dest/agents"
+    cp -R "$src/agents" "$dest/agents"
+  fi
+}
+
+install_user_skill() {
+  local src
+  src="$(find_source_dir)" || {
+    err "cannot find the codex-test source directory"
     exit 1
-  fi
+  }
 
-  # Global skills directory
-  SKILL_DIR="$HOME/.agents/skills/test-coverage"
-  mkdir -p "$SKILL_DIR"
+  copy_skill "$src" "$USER_SKILL_DIR"
 
-  # Copy skill files
-  cp "$SKILL_SRC/SKILL.md" "$SKILL_DIR/"
-  cp -r "$SKILL_SRC/scripts" "$SKILL_DIR/" 2>/dev/null || true
-  cp -r "$SKILL_SRC/agents" "$SKILL_DIR/" 2>/dev/null || true
-  cp -r "$SKILL_SRC/references" "$SKILL_DIR/" 2>/dev/null || true
-  chmod +x "$SKILL_DIR/scripts/"*.sh 2>/dev/null || true
-
-  echo "✅ Skill installed to $SKILL_DIR"
-  echo ""
-  echo "   The skill is now available in all repos."
-  echo "   Use it in Codex:  \$test-coverage"
-  echo "   Or run:           codex-test"
-  echo ""
-  echo "   To install per-repo instead (so teammates get it too):"
-  echo "   cp -r $SKILL_DIR .agents/skills/test-coverage"
-  echo "   git add .agents/skills/test-coverage && git commit"
+  printf 'Installed %s skill to %s\n' "$SKILL_NAME" "$USER_SKILL_DIR"
+  printf 'Use it in Codex as $%s, or run codex-test from a repository.\n' "$SKILL_NAME"
+  printf 'If Codex is already running and the skill does not appear, restart Codex.\n'
 }
 
 install_repo_skill() {
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  SKILL_SRC="$SCRIPT_DIR"
-  if [[ ! -f "$SKILL_SRC/SKILL.md" ]]; then
-    SKILL_SRC="$(dirname "$SCRIPT_DIR")"
-  fi
+  local src dest
+  src="$(find_source_dir)" || {
+    err "cannot find the codex-test source directory"
+    exit 1
+  }
 
-  DEST=".agents/skills/test-coverage"
-  mkdir -p "$DEST"
-  cp "$SKILL_SRC/SKILL.md" "$DEST/"
-  cp -r "$SKILL_SRC/scripts" "$DEST/" 2>/dev/null || true
-  cp -r "$SKILL_SRC/agents" "$DEST/" 2>/dev/null || true
-  cp -r "$SKILL_SRC/references" "$DEST/" 2>/dev/null || true
-  chmod +x "$DEST/scripts/"*.sh 2>/dev/null || true
+  dest=".agents/skills/$SKILL_NAME"
+  copy_skill "$src" "$dest"
 
-  echo "✅ Skill installed to $DEST (repo-local)"
-  echo "   Commit this directory so teammates get it too."
+  printf 'Installed repo-local skill to %s\n' "$dest"
+  printf 'Commit that directory so teammates get the same workflow.\n'
 }
 
-# ── Parse args ───────────────────────────────────────────────
+uninstall_user_skill() {
+  local wrapper current_script current_dir
+  rm -rf "$USER_SKILL_DIR"
+
+  wrapper="$(command -v codex-test 2>/dev/null || true)"
+  current_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  current_script="$current_dir/$(basename "${BASH_SOURCE[0]}")"
+
+  if [[ -n "$wrapper" && "$wrapper" == "$current_script" && -f "$current_dir/SKILL.md" ]]; then
+    printf 'Removed skill %s\n' "$USER_SKILL_DIR"
+    printf 'Leaving source checkout wrapper in place at %s\n' "$wrapper"
+  elif [[ -n "$wrapper" && -w "$wrapper" ]]; then
+    rm -f "$wrapper"
+    printf 'Removed wrapper %s\n' "$wrapper"
+  else
+    printf 'Removed skill %s\n' "$USER_SKILL_DIR"
+    if [[ -n "$wrapper" ]]; then
+      printf 'Wrapper still exists at %s. Remove it manually if desired.\n' "$wrapper"
+    fi
+  fi
+}
+
+print_codex_function() {
+  cat <<'EOF'
+# Add this to ~/.zshrc, ~/.bashrc, or your shell profile, then restart the shell.
+# It forwards "codex test ..." to codex-test and leaves every other codex command alone.
+codex() {
+  if [ "$#" -gt 0 ] && [ "$1" = "test" ]; then
+    shift
+    command codex-test "$@"
+  else
+    command codex "$@"
+  fi
+}
+EOF
+}
+
 MODE="interactive"
-JSON_FLAG=""
+JSON_ARGS=()
+GO_HAM=false
+PLAN_ONLY=false
+GOAL=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --exec|-e)       MODE="exec"; shift ;;
-    --json)          JSON_FLAG="--json"; shift ;;
-    --install)       install_skill; exit 0 ;;
-    --install-repo)  install_repo_skill; exit 0 ;;
-    --help|-h)       usage; exit 0 ;;
-    --version|-v)    echo "codex-test v${VERSION}"; exit 0 ;;
-    *)               EXTRA_ARGS+=("$1"); shift ;;
+    --exec|-e)
+      MODE="exec"
+      shift
+      ;;
+    --json)
+      JSON_ARGS=(--json)
+      shift
+      ;;
+    --go-ham|--yes|--auto)
+      GO_HAM=true
+      shift
+      ;;
+    --plan-only|--dry-run)
+      PLAN_ONLY=true
+      shift
+      ;;
+    --goal|--focus|--target)
+      if [[ $# -lt 2 ]]; then
+        err "$1 requires a value"
+        exit 2
+      fi
+      GOAL="$2"
+      shift 2
+      ;;
+    --install)
+      install_user_skill
+      exit 0
+      ;;
+    --install-repo)
+      install_repo_skill
+      exit 0
+      ;;
+    --uninstall)
+      uninstall_user_skill
+      exit 0
+      ;;
+    --print-codex-function)
+      print_codex_function
+      exit 0
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --version|-v)
+      printf 'codex-test v%s\n' "$VERSION"
+      exit 0
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift
+      ;;
   esac
 done
 
-# ── Check codex is installed ─────────────────────────────────
-if ! command -v codex &>/dev/null; then
-  echo "❌ Codex CLI not found."
-  echo "   Install: npm i -g @openai/codex"
-  echo "   Or:      brew install --cask codex"
+if ! command -v codex >/dev/null 2>&1; then
+  err "Codex CLI not found. Install it with: npm install -g @openai/codex"
+  err "On macOS you can also use: brew install --cask codex"
   exit 1
 fi
 
-# ── Run ──────────────────────────────────────────────────────
+PROMPT="$DEFAULT_PROMPT"
 if [[ "$MODE" == "exec" ]]; then
-  # Non-interactive: codex exec with workspace write access
+  PROMPT="$EXEC_PROMPT"
+fi
+
+if [[ "$PLAN_ONLY" == true ]]; then
+  PROMPT="$PROMPT Stop after writing the proposed plan in chat. Do not edit files."
+fi
+
+if [[ -n "$GOAL" ]]; then
+  PROMPT="$PROMPT User testing goal: $GOAL"
+fi
+
+CODEX_ARGS=()
+if [[ "$MODE" == "exec" ]]; then
+  CODEX_ARGS=(--sandbox workspace-write)
+fi
+if [[ "$GO_HAM" == true ]]; then
+  CODEX_ARGS=(--ask-for-approval never --sandbox workspace-write)
+fi
+
+if [[ "$MODE" == "exec" ]]; then
   exec codex exec \
-    --sandbox workspace-write \
-    $JSON_FLAG \
-    "${EXTRA_ARGS[@]}" \
-    "$PROMPT"
-else
-  # Interactive: launch Codex TUI with the prompt
-  exec codex \
+    "${CODEX_ARGS[@]}" \
+    "${JSON_ARGS[@]}" \
     "${EXTRA_ARGS[@]}" \
     "$PROMPT"
 fi
+
+exec codex \
+  "${CODEX_ARGS[@]}" \
+  "${EXTRA_ARGS[@]}" \
+  "$PROMPT"

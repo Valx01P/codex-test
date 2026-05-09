@@ -1,38 +1,50 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────
-# test-coverage skill: report.sh
-# Post-processes the TEST-COVERAGE-REPORT.md that Codex wrote.
-# Adds timestamp header and validates structure.
-# ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
 ROOT="${1:-.}"
-REPORT="$ROOT/TEST-COVERAGE-REPORT.md"
+REPORT="${2:-$ROOT/CODEX-TEST-REPORT.md}"
+LEGACY_REPORT="$ROOT/TEST-COVERAGE-REPORT.md"
+
+if [[ ! -f "$REPORT" && -f "$LEGACY_REPORT" ]]; then
+  REPORT="$LEGACY_REPORT"
+fi
 
 if [[ ! -f "$REPORT" ]]; then
-  echo "⚠  No report found at $REPORT"
-  echo "   Codex should write the report before calling this script."
+  printf 'No report found. Expected %s\n' "$REPORT" >&2
   exit 1
 fi
 
-# Add generation metadata if not already present
-if ! grep -q "^<!-- generated-by: test-coverage -->" "$REPORT" 2>/dev/null; then
-  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+if ! grep -q '^<!-- generated-by: codex-test -->' "$REPORT" 2>/dev/null; then
+  timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  tmp="${REPORT}.tmp"
   {
-    echo "<!-- generated-by: test-coverage -->"
-    echo "<!-- timestamp: $TIMESTAMP -->"
-    echo ""
+    printf '<!-- generated-by: codex-test -->\n'
+    printf '<!-- timestamp: %s -->\n' "$timestamp"
+    printf '\n'
     cat "$REPORT"
-  } > "${REPORT}.tmp" && mv "${REPORT}.tmp" "$REPORT"
+  } > "$tmp"
+  mv "$tmp" "$REPORT"
 fi
 
-# Count sections for a quick validation
-TOTAL_SECTIONS=$(grep -c '^### ' "$REPORT" 2>/dev/null || echo "0")
-PASS_COUNT=$(grep -c '✅' "$REPORT" 2>/dev/null || echo "0")
-FAIL_COUNT=$(grep -c '❌' "$REPORT" 2>/dev/null || echo "0")
+section_count="$(grep -c '^### ' "$REPORT" 2>/dev/null || true)"
+file_section_count="$(grep -Ec '^### `[^`]+`' "$REPORT" 2>/dev/null || true)"
+pass_count="$(grep -Eci '\b(pass|passing|passed)\b|PASS' "$REPORT" 2>/dev/null || true)"
+fail_count="$(grep -Eci '\b(fail|failing|failed)\b|FAIL' "$REPORT" 2>/dev/null || true)"
+size_bytes="$(wc -c < "$REPORT" | tr -d '[:space:]')"
 
-echo "📄 Report finalized: $REPORT"
-echo "   Sections:  $TOTAL_SECTIONS"
-echo "   Passing:   $PASS_COUNT"
-echo "   Failing:   $FAIL_COUNT"
-echo "   Size:      $(wc -c < "$REPORT" | xargs) bytes"
+printf 'Report finalized: %s\n' "$REPORT"
+printf 'Sections: %s\n' "$section_count"
+printf 'File sections: %s\n' "$file_section_count"
+printf 'Pass markers: %s\n' "$pass_count"
+printf 'Fail markers: %s\n' "$fail_count"
+printf 'Size: %s bytes\n' "$size_bytes"
+
+missing=0
+for heading in "Summary" "Generated" "Validation" "Gaps"; do
+  if ! grep -Eiq "^#+[[:space:]].*$heading" "$REPORT"; then
+    printf 'Warning: report may be missing a %s section\n' "$heading" >&2
+    missing=$((missing + 1))
+  fi
+done
+
+exit 0

@@ -1,85 +1,131 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────
-# Remote installer for codex-test
-# Usage: curl -fsSL https://raw.githubusercontent.com/Valx01P/codex-test/main/install.sh | bash
-# ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="Valx01P/codex-test"
-BRANCH="main"
-SKILL_DIR="$HOME/.agents/skills/test-coverage"
-BIN_DIR="/usr/local/bin"
+REPO="${CODEX_TEST_REPO:-Valx01P/codex-test}"
+BRANCH="${CODEX_TEST_BRANCH:-main}"
+SKILL_NAME="codex-test"
+SKILL_DIR="${CODEX_TEST_SKILL_DIR:-$HOME/.agents/skills/$SKILL_NAME}"
 
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-DIM='\033[2m'
-BOLD='\033[1m'
-NC='\033[0m'
+log() {
+  printf '%s\n' "$*"
+}
 
-echo -e "${BOLD}${CYAN}"
-echo "  ╔══════════════════════════════════════╗"
-echo "  ║     codex-test · skill installer     ║"
-echo "  ╚══════════════════════════════════════╝"
-echo -e "${NC}"
+die() {
+  printf 'install.sh: %s\n' "$*" >&2
+  exit 1
+}
 
-# Check codex is installed
-if ! command -v codex &>/dev/null; then
-  echo "⚠  Codex CLI not found. Install it first:"
-  echo "   npm i -g @openai/codex"
-  echo "   or: brew install --cask codex"
-  echo ""
-  echo "   Installing the skill anyway..."
-fi
+choose_bin_dir() {
+  if [[ -n "${CODEX_TEST_BIN_DIR:-}" ]]; then
+    printf '%s\n' "$CODEX_TEST_BIN_DIR"
+    return 0
+  fi
 
-# Download and install
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+  local dir
+  IFS=':' read -r -a path_dirs <<< "${PATH:-}"
+  for dir in "${path_dirs[@]}"; do
+    [[ -z "$dir" ]] && continue
+    [[ "$dir" == "/bin" || "$dir" == "/usr/bin" || "$dir" == "/sbin" || "$dir" == "/usr/sbin" ]] && continue
+    if [[ -d "$dir" && -w "$dir" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
 
-echo -e "${DIM}Downloading from github.com/${REPO}...${NC}"
+  if [[ -d "/usr/local/bin" && -w "/usr/local/bin" ]]; then
+    printf '%s\n' "/usr/local/bin"
+    return 0
+  fi
 
-# Try git clone first, fall back to curl for individual files
-if command -v git &>/dev/null; then
-  git clone --depth 1 "https://github.com/${REPO}.git" "$TMPDIR/codex-test" 2>/dev/null
-  SRC="$TMPDIR/codex-test"
-else
-  SRC="$TMPDIR/codex-test"
-  mkdir -p "$SRC/scripts" "$SRC/agents" "$SRC/references"
-  BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
-  curl -fsSL "$BASE/SKILL.md"                     -o "$SRC/SKILL.md"
-  curl -fsSL "$BASE/codex-test"                    -o "$SRC/codex-test"
-  curl -fsSL "$BASE/scripts/analyze.sh"            -o "$SRC/scripts/analyze.sh"
-  curl -fsSL "$BASE/scripts/report.sh"             -o "$SRC/scripts/report.sh"
-  curl -fsSL "$BASE/agents/openai.yaml"            -o "$SRC/agents/openai.yaml"
-  curl -fsSL "$BASE/references/quality-rubric.md"  -o "$SRC/references/quality-rubric.md"
-fi
+  printf '%s\n' "$HOME/.local/bin"
+}
 
-# Install skill
-echo -e "${DIM}Installing skill to ${SKILL_DIR}...${NC}"
-mkdir -p "$SKILL_DIR"
-cp "$SRC/SKILL.md" "$SKILL_DIR/"
-cp -r "$SRC/scripts" "$SKILL_DIR/"
-cp -r "$SRC/agents" "$SKILL_DIR/"
-cp -r "$SRC/references" "$SKILL_DIR/"
-chmod +x "$SKILL_DIR/scripts/"*.sh 2>/dev/null || true
+copy_skill() {
+  local src="$1"
+  local dest="$2"
 
-# Install CLI wrapper
-echo -e "${DIM}Installing codex-test to ${BIN_DIR}...${NC}"
-if [[ -w "$BIN_DIR" ]]; then
-  cp "$SRC/codex-test" "$BIN_DIR/codex-test"
-  chmod +x "$BIN_DIR/codex-test"
-else
-  sudo cp "$SRC/codex-test" "$BIN_DIR/codex-test"
-  sudo chmod +x "$BIN_DIR/codex-test"
-fi
+  [[ -f "$src/SKILL.md" ]] || die "downloaded repository is missing SKILL.md"
 
-echo ""
-echo -e "${GREEN}${BOLD}✅ codex-test installed!${NC}"
-echo ""
-echo -e "  ${BOLD}Usage:${NC}"
-echo -e "    ${CYAN}codex-test${NC}              Open Codex with the test-coverage skill"
-echo -e "    ${CYAN}codex-test --exec${NC}       Run headless (for CI)"
-echo -e "    ${CYAN}\$test-coverage${NC}          Invoke inside any Codex session"
-echo ""
-echo -e "  ${BOLD}Uninstall:${NC}"
-echo -e "    rm -rf ${SKILL_DIR} ${BIN_DIR}/codex-test"
-echo ""
+  mkdir -p "$dest"
+  cp "$src/SKILL.md" "$dest/"
+
+  rm -rf "$dest/scripts" "$dest/references" "$dest/agents"
+  cp -R "$src/scripts" "$dest/scripts"
+  cp -R "$src/references" "$dest/references"
+  cp -R "$src/agents" "$dest/agents"
+  chmod +x "$dest/scripts/"*.sh 2>/dev/null || true
+}
+
+download_repo() {
+  local src="$1"
+
+  if command -v git >/dev/null 2>&1; then
+    git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO}.git" "$src" >/dev/null 2>&1 && return 0
+  fi
+
+  command -v curl >/dev/null 2>&1 || die "curl or git is required"
+
+  mkdir -p "$src/scripts" "$src/references" "$src/agents"
+  local base="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
+  curl -fsSL "$base/SKILL.md" -o "$src/SKILL.md"
+  curl -fsSL "$base/codex-test" -o "$src/codex-test"
+  curl -fsSL "$base/codex-test.ps1" -o "$src/codex-test.ps1"
+  curl -fsSL "$base/scripts/analyze.sh" -o "$src/scripts/analyze.sh"
+  curl -fsSL "$base/scripts/report.sh" -o "$src/scripts/report.sh"
+  curl -fsSL "$base/references/quality-rubric.md" -o "$src/references/quality-rubric.md"
+  curl -fsSL "$base/agents/openai.yaml" -o "$src/agents/openai.yaml"
+}
+
+main() {
+  local tmp src bin_dir wrapper
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+
+  src="$tmp/codex-test"
+  log "Downloading github.com/${REPO}..."
+  download_repo "$src"
+
+  log "Installing skill to $SKILL_DIR..."
+  copy_skill "$src" "$SKILL_DIR"
+
+  bin_dir="$(choose_bin_dir)"
+  mkdir -p "$bin_dir"
+  wrapper="$bin_dir/codex-test"
+  cp "$src/codex-test" "$wrapper"
+  chmod +x "$wrapper"
+
+  log ""
+  log "codex-test installed."
+  log ""
+  log "Skill:   $SKILL_DIR"
+  log "Command: $wrapper"
+  log ""
+
+  if ! command -v codex >/dev/null 2>&1; then
+    log "Codex CLI was not found. Install it first:"
+    log "  npm install -g @openai/codex"
+    log "  brew install --cask codex"
+    log ""
+  fi
+
+  case ":${PATH:-}:" in
+    *":$bin_dir:"*) ;;
+    *)
+      log "Add this directory to PATH if codex-test is not found:"
+      log "  export PATH=\"$bin_dir:\$PATH\""
+      log ""
+      ;;
+  esac
+
+  log "Try it:"
+  log "  codex-test --help"
+  log "  codex-test"
+  log ""
+  log "Optional shell function for 'codex test':"
+  log "  codex-test --print-codex-function"
+  log ""
+  log "Uninstall:"
+  log "  rm -rf \"$SKILL_DIR\" \"$wrapper\""
+}
+
+main "$@"
