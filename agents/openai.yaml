@@ -1,0 +1,12 @@
+interface:
+  display_name: "Test Coverage Generator"
+  short_description: "Analyze gaps, generate tests with explanations, validate and report"
+  brand_color: "#22C55E"
+  default_prompt: >
+    Analyze this repository for test coverage gaps. Generate meaningful
+    tests with full explanations for every untested file, validate them,
+    and produce a TEST-COVERAGE-REPORT.md with detailed reasoning for
+    each generated test.
+
+policy:
+  allow_implicit_invocation: true

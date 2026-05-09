@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+# codex-test — shortcut for running the $test-coverage skill
+#
+# Usage:
+#   codex-test                   # interactive (opens Codex TUI)
+#   codex-test --exec            # non-interactive (codex exec)
+#   codex-test --exec --json     # JSON output for piping
+#   codex-test --help
+#
+# This is a thin wrapper. All the real logic is in the skill.
+# ─────────────────────────────────────────────────────────────
+set -euo pipefail
+
+VERSION="0.1.0"
+
+PROMPT='$test-coverage Analyze this repository for test coverage gaps. Generate tests for all untested files, validate them, and produce the TEST-COVERAGE-REPORT.md.'
+
+usage() {
+  cat <<EOF
+codex-test v${VERSION} — AI-powered test coverage generator
+
+Usage:
+  codex-test                Run interactively in Codex TUI
+  codex-test --exec         Run non-interactively (codex exec)
+  codex-test --exec --json  Non-interactive with JSON output
+  codex-test --install      Install the skill to your global skills dir
+  codex-test --help         Show this help
+
+Prerequisites:
+  • Codex CLI installed (npm i -g @openai/codex or brew install --cask codex)
+  • Authenticated (codex auth or CODEX_API_KEY set)
+  • Skill installed (run: codex-test --install)
+
+What it does:
+  1. Scans your repo for untested source files
+  2. Builds a prioritized test plan
+  3. Generates test files matching your project's conventions
+  4. Runs each generated test to verify it passes
+  5. Produces TEST-COVERAGE-REPORT.md with full explanations
+  6. Lets you review via Codex's native approval flow or git diff
+
+EOF
+}
+
+install_skill() {
+  # Determine the skill source directory (where this script lives)
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SKILL_SRC="$SCRIPT_DIR"
+
+  # If the SKILL.md isn't alongside this script, check parent
+  if [[ ! -f "$SKILL_SRC/SKILL.md" ]]; then
+    SKILL_SRC="$(dirname "$SCRIPT_DIR")"
+  fi
+
+  if [[ ! -f "$SKILL_SRC/SKILL.md" ]]; then
+    echo "❌ Cannot find SKILL.md. Run this from the codex-test directory."
+    exit 1
+  fi
+
+  # Global skills directory
+  SKILL_DIR="$HOME/.agents/skills/test-coverage"
+  mkdir -p "$SKILL_DIR"
+
+  # Copy skill files
+  cp "$SKILL_SRC/SKILL.md" "$SKILL_DIR/"
+  cp -r "$SKILL_SRC/scripts" "$SKILL_DIR/" 2>/dev/null || true
+  cp -r "$SKILL_SRC/agents" "$SKILL_DIR/" 2>/dev/null || true
+  cp -r "$SKILL_SRC/references" "$SKILL_DIR/" 2>/dev/null || true
+  chmod +x "$SKILL_DIR/scripts/"*.sh 2>/dev/null || true
+
+  echo "✅ Skill installed to $SKILL_DIR"
+  echo ""
+  echo "   The skill is now available in all repos."
+  echo "   Use it in Codex:  \$test-coverage"
+  echo "   Or run:           codex-test"
+  echo ""
+  echo "   To install per-repo instead (so teammates get it too):"
+  echo "   cp -r $SKILL_DIR .agents/skills/test-coverage"
+  echo "   git add .agents/skills/test-coverage && git commit"
+}
+
+install_repo_skill() {
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SKILL_SRC="$SCRIPT_DIR"
+  if [[ ! -f "$SKILL_SRC/SKILL.md" ]]; then
+    SKILL_SRC="$(dirname "$SCRIPT_DIR")"
+  fi
+
+  DEST=".agents/skills/test-coverage"
+  mkdir -p "$DEST"
+  cp "$SKILL_SRC/SKILL.md" "$DEST/"
+  cp -r "$SKILL_SRC/scripts" "$DEST/" 2>/dev/null || true
+  cp -r "$SKILL_SRC/agents" "$DEST/" 2>/dev/null || true
+  cp -r "$SKILL_SRC/references" "$DEST/" 2>/dev/null || true
+  chmod +x "$DEST/scripts/"*.sh 2>/dev/null || true
+
+  echo "✅ Skill installed to $DEST (repo-local)"
+  echo "   Commit this directory so teammates get it too."
+}
+
+# ── Parse args ───────────────────────────────────────────────
+MODE="interactive"
+JSON_FLAG=""
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --exec|-e)       MODE="exec"; shift ;;
+    --json)          JSON_FLAG="--json"; shift ;;
+    --install)       install_skill; exit 0 ;;
+    --install-repo)  install_repo_skill; exit 0 ;;
+    --help|-h)       usage; exit 0 ;;
+    --version|-v)    echo "codex-test v${VERSION}"; exit 0 ;;
+    *)               EXTRA_ARGS+=("$1"); shift ;;
+  esac
+done
+
+# ── Check codex is installed ─────────────────────────────────
+if ! command -v codex &>/dev/null; then
+  echo "❌ Codex CLI not found."
+  echo "   Install: npm i -g @openai/codex"
+  echo "   Or:      brew install --cask codex"
+  exit 1
+fi
+
+# ── Run ──────────────────────────────────────────────────────
+if [[ "$MODE" == "exec" ]]; then
+  # Non-interactive: codex exec with workspace write access
+  exec codex exec \
+    --sandbox workspace-write \
+    $JSON_FLAG \
+    "${EXTRA_ARGS[@]}" \
+    "$PROMPT"
+else
+  # Interactive: launch Codex TUI with the prompt
+  exec codex \
+    "${EXTRA_ARGS[@]}" \
+    "$PROMPT"
+fi
