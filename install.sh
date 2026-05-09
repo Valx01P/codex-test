@@ -7,6 +7,7 @@ SKILL_NAME="codex-test"
 SKILL_DIR="${CODEX_TEST_SKILL_DIR:-$HOME/.agents/skills/$SKILL_NAME}"
 SHELL_MARKER_START="# >>> codex-test shell integration >>>"
 SHELL_MARKER_END="# <<< codex-test shell integration <<<"
+INSTALL_TMP=""
 
 log() {
   printf '%s\n' "$*"
@@ -240,12 +241,18 @@ download_repo() {
   curl -fsSL "$base/agents/openai.yaml" -o "$src/agents/openai.yaml"
 }
 
-main() {
-  local tmp src bin_dir wrapper primary_profile
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+cleanup_tmp() {
+  if [[ -n "${INSTALL_TMP:-}" && -d "$INSTALL_TMP" ]]; then
+    rm -rf "$INSTALL_TMP"
+  fi
+}
 
-  src="$tmp/codex-test"
+main() {
+  local src bin_dir wrapper primary_profile
+  INSTALL_TMP="$(mktemp -d)"
+  trap cleanup_tmp EXIT
+
+  src="$INSTALL_TMP/codex-test"
   log "Downloading github.com/${REPO}..."
   download_repo "$src"
 

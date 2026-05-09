@@ -572,14 +572,26 @@ if [[ "$GO_HAM" == true ]]; then
 fi
 
 if [[ "$MODE" == "exec" ]]; then
-  exec codex exec \
-    "${CODEX_ARGS[@]}" \
-    "${JSON_ARGS[@]}" \
-    "${EXTRA_ARGS[@]}" \
-    "$PROMPT"
+  COMMAND_ARGS=(exec)
+  if ((${#CODEX_ARGS[@]})); then
+    COMMAND_ARGS+=("${CODEX_ARGS[@]}")
+  fi
+  if ((${#JSON_ARGS[@]})); then
+    COMMAND_ARGS+=("${JSON_ARGS[@]}")
+  fi
+  if ((${#EXTRA_ARGS[@]})); then
+    COMMAND_ARGS+=("${EXTRA_ARGS[@]}")
+  fi
+  COMMAND_ARGS+=("$PROMPT")
+  exec codex "${COMMAND_ARGS[@]}"
 fi
 
-exec codex \
-  "${CODEX_ARGS[@]}" \
-  "${EXTRA_ARGS[@]}" \
-  "$PROMPT"
+COMMAND_ARGS=()
+if ((${#CODEX_ARGS[@]})); then
+  COMMAND_ARGS+=("${CODEX_ARGS[@]}")
+fi
+if ((${#EXTRA_ARGS[@]})); then
+  COMMAND_ARGS+=("${EXTRA_ARGS[@]}")
+fi
+COMMAND_ARGS+=("$PROMPT")
+exec codex "${COMMAND_ARGS[@]}"
