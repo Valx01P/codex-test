@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
 # Remote installer for codex-test
-# Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_USER/codex-test/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/Valx01P/codex-test/main/install.sh | bash
 # ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="YOUR_USER/codex-test"   # ← update with your GitHub username
+REPO="Valx01P/codex-test"
 BRANCH="main"
 SKILL_DIR="$HOME/.agents/skills/test-coverage"
 BIN_DIR="/usr/local/bin"
